@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px;
+    height: 630px;
+    background: #0d0d0d;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    overflow: hidden;
+    position: relative;
+  }
+  .bg {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 30% 50%, #1a1030 0%, #0d0d0d 70%);
+  }
+  .cats {
+    position: absolute;
+    inset: 0;
+    opacity: 0.15;
+    font-size: 48px;
+    line-height: 1.2;
+    color: #ff9932;
+    word-spacing: 8px;
+    padding: 20px;
+    overflow: hidden;
+  }
+  .content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 60px 80px;
+  }
+  h1 {
+    font-size: 96px;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: -2px;
+    line-height: 1;
+    margin-bottom: 16px;
+  }
+  h1 span {
+    background: linear-gradient(135deg, #ff9932 0%, #ffcc66 50%, #ff7744 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .tagline {
+    font-size: 32px;
+    color: #ccc;
+    font-weight: 400;
+    margin-bottom: 40px;
+  }
+  .stats {
+    display: flex;
+    gap: 40px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+  }
+  .stat-num {
+    font-size: 42px;
+    font-weight: 700;
+    color: #ff9932;
+  }
+  .stat-label {
+    font-size: 18px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .author {
+    position: absolute;
+    bottom: 50px;
+    right: 80px;
+    text-align: right;
+    color: #666;
+    font-size: 20px;
+  }
+  .author strong { color: #aaa; }
+  .rust-badge {
+    position: absolute;
+    top: 50px;
+    right: 80px;
+    background: rgba(255,153,50,0.1);
+    border: 1px solid rgba(255,153,50,0.3);
+    border-radius: 8px;
+    padding: 8px 16px;
+    color: #ff9932;
+    font-size: 18px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="cats">
+    &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008;
+    &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008;
+    &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008;
+    &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008;
+    &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008; &#128008;
+  </div>
+  <div class="rust-badge">Built with Rust + wgpu</div>
+  <div class="content">
+    <h1><span>catswarm</span></h1>
+    <div class="tagline">1000 procedural cats swarming your desktop</div>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num">1000+</div>
+        <div class="stat-label">Cats</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">1</div>
+        <div class="stat-label">Draw Call</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">60</div>
+        <div class="stat-label">FPS</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">0</div>
+        <div class="stat-label">Allocs/Frame</div>
+      </div>
+    </div>
+  </div>
+  <div class="author">by <strong>Trent Sterling</strong> &middot; tront.xyz</div>
+</body>
+</html>
