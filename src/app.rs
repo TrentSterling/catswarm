@@ -11,7 +11,7 @@ use crate::click::ClickState;
 use crate::debug::timer::{SystemPhase, SystemTimers};
 use crate::debug::DebugOverlay;
 use crate::ecs::components::{
-    Appearance, BehaviorState, CatName, CatState, Personality, Position, PrevPosition,
+    Appearance, BehaviorState, CatName, CatState, GiftCarrier, Personality, Position, PrevPosition,
     SleepingPile, SpawnAnimation,
 };
 use crate::ecs::systems;
@@ -297,7 +297,7 @@ impl App {
         let alpha = self.interpolation_alpha();
         let time = self.elapsed_time as f32;
 
-        for (_, (pos, prev_pos, vel, appearance, cat_state, pile, spawn_anim)) in self
+        for (_, (pos, prev_pos, vel, appearance, cat_state, pile, spawn_anim, gift)) in self
             .world
             .query::<(
                 &Position,
@@ -307,6 +307,7 @@ impl App {
                 &CatState,
                 Option<&SleepingPile>,
                 Option<&SpawnAnimation>,
+                Option<&GiftCarrier>,
             )>()
             .iter()
         {
@@ -339,6 +340,13 @@ impl App {
                     frame: 3,
                     rotation: 0.0,
                 });
+            }
+
+            // --- Pounce butt wiggle ---
+            if cat_state.state == BehaviorState::Pouncing {
+                let wiggle = (time * 30.0).sin() * 0.06;
+                inst.size[0] *= 1.0 + wiggle;
+                inst.size[1] *= 1.0 - wiggle * 0.5;
             }
 
             // --- Fur puffing when startled ---
@@ -413,6 +421,18 @@ impl App {
             }
 
             self.instance_buf.push(inst);
+
+            // Floating heart above gift carriers
+            if gift.is_some() {
+                let bob = (time * 3.0 + pos.0.x * 0.01).sin() * 4.0;
+                self.instance_buf.push(CatInstance {
+                    position: [inst.position[0], inst.position[1] - appearance.size * 35.0 + bob],
+                    size: [0.6, 0.6],
+                    color: 0xFF4488FF, // pink heart
+                    frame: 4,          // heart shape
+                    rotation: 0.0,
+                });
+            }
         }
         // Render yarn balls
         for ball in &self.yarn_balls.balls {
@@ -1076,6 +1096,7 @@ fn mood_color(state: BehaviorState) -> (f32, f32, f32) {
         BehaviorState::Zoomies => (1.0, 0.2, 0.1),                 // bright red
         BehaviorState::Startled => (1.0, 0.9, 0.2),                // bright yellow
         BehaviorState::Yawning => (0.5, 0.5, 0.8),                 // muted blue
+        BehaviorState::Pouncing => (1.0, 0.5, 0.0),                // orange (hunting)
     }
 }
 

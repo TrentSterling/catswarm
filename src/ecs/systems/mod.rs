@@ -57,7 +57,8 @@ pub fn tick(
 
     // 5. Cat-to-cat interactions
     timers.begin();
-    interaction::update(world, snapshots, grid, interaction_bufs, rng, dt);
+    let mouse_pos = glam::Vec2::new(mouse_x, mouse_y);
+    interaction::update(world, snapshots, grid, interaction_bufs, rng, dt, mouse_pos);
     timers.end(SystemPhase::Interaction);
 
     // 6. Circle collision resolution (push overlapping cats apart)

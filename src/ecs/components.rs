@@ -36,6 +36,7 @@ pub enum BehaviorState {
     Startled,
     Yawning,
     Parading,
+    Pouncing,
 }
 
 /// Cat name for tooltips.
@@ -81,6 +82,13 @@ pub struct SleepingPile {
 #[derive(Debug, Clone, Copy)]
 pub struct Stacked {
     pub base: hecs::Entity,
+}
+
+/// A cat carrying a gift to the cursor.
+#[derive(Debug, Clone, Copy)]
+pub struct GiftCarrier {
+    /// Time remaining before giving up.
+    pub timer: f32,
 }
 
 /// Spawn drop-in animation. Physics-based: gravity fall, bounce on impact, eased rotation.
