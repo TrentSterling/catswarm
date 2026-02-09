@@ -278,14 +278,16 @@ fn sd_box_shape(uv: vec2<f32>) -> f32 {
 // SDF water glass (frame 10) — trapezoid with circle rim
 fn sd_glass(uv: vec2<f32>) -> f32 {
     let p = uv - vec2<f32>(0.5, 0.5);
-    // Glass body: trapezoid (wider at top)
-    let top_w = 0.22;
-    let bot_w = 0.15;
+    // Glass body: trapezoid (wider at top, narrow at bottom)
+    // In UV space: -y = top of screen, +y = bottom
+    let top_w = 0.22;   // wide opening at top
+    let bot_w = 0.15;   // narrow base at bottom
     let h = 0.30;
-    let t = (p.y + h * 0.5) / h; // 0 at bottom, 1 at top
-    let w = mix(bot_w, top_w, clamp(t, 0.0, 1.0));
+    // t=0 at top (-y), t=1 at bottom (+y): narrow at bottom, wide at top
+    let t = (p.y + h * 0.5) / h; // 0 at top, 1 at bottom
+    let w = mix(top_w, bot_w, clamp(t, 0.0, 1.0));
     let body = max(abs(p.x) - w, abs(p.y) - h * 0.5);
-    // Rim: thin ellipse at top
+    // Rim: thin ellipse at top (opening)
     let rim = sd_ellipse(p, vec2<f32>(0.0, -h * 0.5), vec2<f32>(top_w + 0.02, 0.03));
     return min(body, rim);
 }
@@ -369,12 +371,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         uv = rotate_uv(uv, in.rotation);
     }
 
-    // Frames 8+ = night glow variant (subtract 8 to get base frame)
-    let has_glow = in.frame >= 8u;
+    // Toy frames (9=box, 10=glass) use raw frame — no glow variant
+    // Cat frames 8+ = night glow variant (subtract 8 to get base frame)
+    let is_toy = in.frame == 9u || in.frame == 10u;
+    let has_glow = !is_toy && in.frame >= 8u;
     let state = select(in.frame, in.frame - 8u, has_glow);
 
     // Select shape based on frame
-    // 0=sitting, 1=walking, 2=sleeping, 3=circle, 4=heart, 5=star, 6=Z-letter, 7=walking-B
+    // 0=sitting, 1=walking, 2=sleeping, 3=circle, 4=heart, 5=star, 6=Z-letter, 7=walking-B, 9=box, 10=glass
     var d: f32;
 
     if state == 10u {

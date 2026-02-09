@@ -484,7 +484,7 @@ impl App {
             // Cardboard brown color
             self.instance_buf.push(CatInstance {
                 position: cbox.pos.into(),
-                size: [3.0, 3.0],
+                size: [1.2, 1.2],
                 color: (0xC4 << 24) | (0x8A << 16) | (0x3F << 8) | alpha,
                 frame: 9,
                 rotation: 0.0,
@@ -498,10 +498,10 @@ impl App {
             }
             let fade = (glass.lifetime / 5.0).clamp(0.0, 1.0);
             let alpha = (fade * 255.0) as u32;
-            // Light blue glass color
+            // Light blue glass color, small sprite
             self.instance_buf.push(CatInstance {
                 position: glass.pos.into(),
-                size: [2.0, 2.5],
+                size: [0.7, 0.9],
                 color: (0x88 << 24) | (0xCC << 16) | (0xFF << 8) | alpha,
                 frame: 10,
                 rotation: 0.0,
