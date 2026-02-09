@@ -77,15 +77,19 @@ pub struct SleepingPile {
     pub breathing_offset: f32,
 }
 
-/// Spawn drop-in animation. Cat falls from top of screen, somersaults, lands on feet.
+/// Spawn drop-in animation. Physics-based: gravity fall, bounce on impact, eased rotation.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnAnimation {
-    /// Where the cat should land.
+    /// Where the cat started (above screen, negative Y).
+    pub start_y: f32,
+    /// Where the cat should land (ground level).
     pub target_y: f32,
-    /// Progress 0.0 (top of screen) to 1.0 (landed).
-    pub progress: f32,
-    /// Animation speed (randomized so cats don't all land at the same time).
-    pub speed: f32,
-    /// Number of somersault rotations (0 = no flip, 1-3 = tumble).
+    /// Current vertical velocity (pixels/second, positive = downward).
+    pub vel_y: f32,
+    /// Number of full somersault rotations during the fall.
     pub flips: u8,
+    /// Whether the cat has hit the ground at least once.
+    pub has_landed: bool,
+    /// How many bounces have occurred.
+    pub bounce_count: u8,
 }
