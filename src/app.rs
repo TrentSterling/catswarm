@@ -7,6 +7,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId, WindowLevel};
 
 use crate::cat;
+use crate::click::ClickState;
 use crate::debug::timer::{SystemPhase, SystemTimers};
 use crate::debug::DebugOverlay;
 use crate::ecs::components::{Appearance, CatState, Position, PrevPosition};
@@ -60,6 +61,9 @@ struct App {
     // Mode system (Work/Play/Zen/Chaos + AFK escalation)
     mode_state: ModeState,
 
+    // Click interaction state (startle, treats, laser)
+    click_state: ClickState,
+
     // RNG (shared, deterministic per session)
     rng: fastrand::Rng,
 
@@ -88,6 +92,7 @@ impl App {
             interaction_bufs: InteractionBuffers::new(INITIAL_CAT_COUNT),
             cursor_state: CursorState::new(),
             mode_state: ModeState::new(),
+            click_state: ClickState::new(),
             rng: fastrand::Rng::new(),
             last_frame_time: None,
             accumulator: 0.0,
@@ -112,6 +117,19 @@ impl App {
         #[cfg(not(windows))]
         let (mouse_x, mouse_y) = (0.0f32, 0.0f32);
 
+        // Poll mouse buttons for click interactions
+        #[cfg(windows)]
+        let (left_down, right_down) = platform::win32::get_mouse_buttons();
+        #[cfg(not(windows))]
+        let (left_down, right_down) = (false, false);
+
+        self.click_state.update(
+            left_down,
+            right_down,
+            glam::Vec2::new(mouse_x, mouse_y),
+            dt as f32,
+        );
+
         // Borrow timers from debug overlay (or use a throwaway).
         let timers = match &mut self.debug {
             Some(d) => &mut d.system_timers,
@@ -132,6 +150,14 @@ impl App {
                 &mut self.snapshots,
                 &mut self.interaction_bufs,
                 timers,
+            );
+
+            // Click interactions (startle, treats, laser)
+            systems::click::update(
+                &mut self.world,
+                &self.click_state,
+                glam::Vec2::new(mouse_x, mouse_y),
+                &mut self.rng,
             );
 
             self.accumulator -= TICK_RATE;
