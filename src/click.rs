@@ -20,6 +20,7 @@ const LASER_DURATION: f32 = 5.0;
 pub struct ClickState {
     left_was_down: bool,
     right_was_down: bool,
+    middle_was_down: bool,
     last_left_click_time: f64,
     pub treats: Vec<Treat>,
     pub laser_active: bool,
@@ -32,6 +33,8 @@ pub struct ClickState {
     pub right_clicked: bool,
     /// Set for one frame when double click detected.
     pub double_clicked: bool,
+    /// Set for one frame when middle click detected (yarn ball spawn/throw).
+    pub middle_clicked: bool,
 }
 
 impl ClickState {
@@ -39,6 +42,7 @@ impl ClickState {
         Self {
             left_was_down: false,
             right_was_down: false,
+            middle_was_down: false,
             last_left_click_time: -1.0,
             treats: Vec::with_capacity(MAX_TREATS),
             laser_active: false,
@@ -47,15 +51,24 @@ impl ClickState {
             left_clicked: false,
             right_clicked: false,
             double_clicked: false,
+            middle_clicked: false,
         }
     }
 
     /// Update click state from raw button polling. Call once per frame.
-    pub fn update(&mut self, left_down: bool, right_down: bool, mouse_pos: Vec2, dt: f32) {
+    pub fn update(
+        &mut self,
+        left_down: bool,
+        right_down: bool,
+        middle_down: bool,
+        mouse_pos: Vec2,
+        dt: f32,
+    ) {
         self.elapsed += dt as f64;
         self.left_clicked = false;
         self.right_clicked = false;
         self.double_clicked = false;
+        self.middle_clicked = false;
 
         // Edge-detect left click (press, not hold)
         if left_down && !self.left_was_down {
@@ -81,6 +94,12 @@ impl ClickState {
             }
         }
         self.right_was_down = right_down;
+
+        // Edge-detect middle click (yarn ball)
+        if middle_down && !self.middle_was_down {
+            self.middle_clicked = true;
+        }
+        self.middle_was_down = middle_down;
 
         // Update treat timers
         for treat in &mut self.treats {

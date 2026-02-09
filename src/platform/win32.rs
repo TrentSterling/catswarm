@@ -149,12 +149,13 @@ pub fn get_idle_time() -> f64 {
     }
 }
 
-/// Get mouse button states. Returns (left_down, right_down).
-pub fn get_mouse_buttons() -> (bool, bool) {
+/// Get mouse button states. Returns (left_down, right_down, middle_down).
+pub fn get_mouse_buttons() -> (bool, bool, bool) {
     unsafe {
         let left = GetAsyncKeyState(0x01) & (0x8000u16 as i16) != 0; // VK_LBUTTON
         let right = GetAsyncKeyState(0x02) & (0x8000u16 as i16) != 0; // VK_RBUTTON
-        (left, right)
+        let middle = GetAsyncKeyState(0x04) & (0x8000u16 as i16) != 0; // VK_MBUTTON
+        (left, right, middle)
     }
 }
 

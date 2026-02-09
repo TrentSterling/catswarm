@@ -3,6 +3,7 @@ use glam::Vec2;
 use crate::click::ClickState;
 use crate::ecs::components::{BehaviorState, CatState, Personality, Position, Velocity};
 use crate::ecs::systems::behavior;
+use crate::toy::YarnBall;
 
 /// Startle radius: cats within this of a click get startled.
 const STARTLE_RADIUS: f32 = 100.0;
@@ -21,12 +22,20 @@ const LASER_CHASE_SPEED: f32 = 200.0;
 /// Laser jitter amplitude.
 const LASER_JITTER: f32 = 40.0;
 
-/// Process click interactions: startle, treats, laser pointer.
+/// Yarn ball attraction radius.
+const YARN_ATTRACT_RADIUS: f32 = 250.0;
+/// Yarn ball chase speed.
+const YARN_CHASE_SPEED: f32 = 100.0;
+/// Yarn ball bat impulse when a cat reaches it.
+const YARN_BAT_IMPULSE: f32 = 80.0;
+
+/// Process click interactions: startle, treats, laser pointer, yarn ball.
 pub fn update(
     world: &mut hecs::World,
     click: &ClickState,
     mouse_pos: Vec2,
     rng: &mut fastrand::Rng,
+    yarn: &mut YarnBall,
 ) {
     // --- Left click: startle nearest cat + flee impulse ---
     if click.left_clicked {
@@ -148,6 +157,68 @@ pub fn update(
                 state.state = BehaviorState::ChasingMouse;
                 state.timer = 0.5; // refresh frequently for jittery tracking
             }
+        }
+    }
+
+    // --- Middle click: spawn/throw yarn ball ---
+    if click.middle_clicked {
+        if yarn.active {
+            // Throw it from current position toward mouse
+            let dir = (mouse_pos - yarn.pos).normalize_or_zero();
+            yarn.throw(dir * 300.0);
+        } else {
+            yarn.spawn(mouse_pos);
+        }
+    }
+
+    // --- Yarn ball: attract nearby cats, let them bat it ---
+    if yarn.active {
+        let yarn_pos = yarn.pos;
+        let attract_sq = YARN_ATTRACT_RADIUS * YARN_ATTRACT_RADIUS;
+        let mut bat_impulse = Vec2::ZERO;
+
+        for (_, (pos, vel, state, personality)) in world
+            .query_mut::<(&Position, &mut Velocity, &mut CatState, &Personality)>()
+        {
+            // Only idle/walking/running cats with some energy chase the ball
+            if !matches!(
+                state.state,
+                BehaviorState::Idle | BehaviorState::Walking | BehaviorState::Running
+            ) {
+                continue;
+            }
+            if personality.energy < 0.3 {
+                continue;
+            }
+
+            let to_yarn = yarn_pos - pos.0;
+            let dist_sq = to_yarn.length_squared();
+            if dist_sq > attract_sq || dist_sq < 1.0 {
+                continue;
+            }
+
+            let dist = dist_sq.sqrt();
+
+            // Cat is close enough to bat the ball
+            if dist < 20.0 {
+                let bat_dir = Vec2::new(rng.f32() - 0.5, rng.f32() - 0.5).normalize_or_zero();
+                bat_impulse += bat_dir * YARN_BAT_IMPULSE * personality.energy;
+                // Cat gets excited
+                state.state = BehaviorState::Running;
+                state.timer = 0.3 + rng.f32() * 0.5;
+            } else {
+                // Chase toward yarn ball
+                let dir = to_yarn / dist;
+                let speed = YARN_CHASE_SPEED * (0.5 + personality.energy * 0.5);
+                vel.0 = dir * speed;
+                state.state = BehaviorState::Running;
+                state.timer = 0.5;
+            }
+        }
+
+        // Apply accumulated bat impulses to the yarn ball
+        if bat_impulse.length_squared() > 1.0 {
+            yarn.bat(bat_impulse);
         }
     }
 }

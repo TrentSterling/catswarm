@@ -7,6 +7,7 @@ pub mod spatial;
 pub mod window_aware;
 
 use crate::debug::timer::{SystemPhase, SystemTimers};
+use crate::heatmap::Heatmap;
 use crate::spatial::{CatSnapshot, SpatialHash};
 use interaction::InteractionBuffers;
 use mouse::CursorState;
@@ -25,6 +26,9 @@ pub fn tick(
     snapshots: &mut Vec<CatSnapshot>,
     interaction_bufs: &mut InteractionBuffers,
     timers: &mut SystemTimers,
+    heatmap: &Heatmap,
+    edge_affinity: f32,
+    platforms: &[window_aware::DesktopWindow],
 ) {
     // 0. Update cursor tracking
     cursor.update(mouse_x, mouse_y, dt);
@@ -39,9 +43,9 @@ pub fn tick(
     behavior::update(world, dt, rng);
     timers.end(SystemPhase::Behavior);
 
-    // 3. Movement integration (apply velocity, friction, bounds)
+    // 3. Movement integration (apply velocity, friction, bounds, heatmap avoidance, edge affinity)
     timers.begin();
-    movement::integrate(world, dt, screen_w, screen_h);
+    movement::integrate(world, dt, screen_w, screen_h, heatmap, edge_affinity);
     timers.end(SystemPhase::Movement);
 
     // 4. Rebuild spatial hash + snapshot cache
@@ -54,6 +58,6 @@ pub fn tick(
     interaction::update(world, snapshots, grid, interaction_bufs, rng, dt);
     timers.end(SystemPhase::Interaction);
 
-    // 6. Window awareness (TODO: Milestone 6)
-    // window_aware::update(world, dt);
+    // 6. Window awareness (cats perch on titlebars)
+    window_aware::update(world, platforms, rng);
 }
