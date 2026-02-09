@@ -28,6 +28,7 @@ use crate::spatial::{CatSnapshot, SpatialHash};
 use crate::daynight::DayNightState;
 use crate::particles::ParticleSystem;
 use crate::toy::YarnBalls;
+use crate::tray::{TrayCommand, TrayIcon};
 
 /// Target simulation tick rate (seconds per tick).
 const TICK_RATE: f64 = 1.0 / 60.0;
@@ -92,6 +93,9 @@ struct App {
     // Day/night cycle
     daynight: DayNightState,
 
+    // System tray icon
+    tray: TrayIcon,
+
     // Window platforms (periodically refreshed)
     desktop_windows: Vec<DesktopWindow>,
     window_refresh_timer: f64,
@@ -134,6 +138,7 @@ impl App {
             yarn_balls: YarnBalls::new(),
             particles: ParticleSystem::new(),
             daynight: DayNightState::new(),
+            tray: TrayIcon::new(),
             desktop_windows: Vec::new(),
             window_refresh_timer: 0.0,
             rng: fastrand::Rng::new(),
@@ -292,7 +297,7 @@ impl App {
             )>()
             .iter()
         {
-            let mut inst = CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha);
+            let mut inst = CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha, time);
 
             // --- Shadow (rendered first = behind cat) ---
             // Shadow projects to ground at the cat's feet (~25px below center).
@@ -378,6 +383,11 @@ impl App {
 
             // Day/night color tint
             inst.color = apply_tint(inst.color, self.daynight.tint);
+
+            // Eye glow at night: add 8 to frame index to signal shader
+            if self.daynight.is_night && inst.frame <= 1 {
+                inst.frame += 8;
+            }
 
             self.instance_buf.push(inst);
         }
@@ -547,6 +557,45 @@ impl ApplicationHandler for App {
                 self.last_frame_time = None;
                 return;
             }
+        }
+
+        // Poll system tray menu commands
+        match self.tray.poll() {
+            TrayCommand::Quit => {
+                log::info!("Quit from tray menu");
+                event_loop.exit();
+                return;
+            }
+            TrayCommand::SetModeWork => {
+                self.mode_state.set_mode(crate::mode::AppMode::Work);
+                log::info!("Tray: mode set to Work");
+            }
+            TrayCommand::SetModePlay => {
+                self.mode_state.set_mode(crate::mode::AppMode::Play);
+                log::info!("Tray: mode set to Play");
+            }
+            TrayCommand::SetModeZen => {
+                self.mode_state.set_mode(crate::mode::AppMode::Zen);
+                log::info!("Tray: mode set to Zen");
+            }
+            TrayCommand::SetModeChaos => {
+                self.mode_state.set_mode(crate::mode::AppMode::Chaos);
+                log::info!("Tray: mode set to Chaos");
+            }
+            TrayCommand::TogglePause => {
+                if let Some(debug) = &mut self.debug {
+                    debug.paused = !debug.paused;
+                    log::info!("Tray: paused = {}", debug.paused);
+                }
+            }
+            TrayCommand::ToggleDebug => {
+                if let (Some(debug), Some(window)) = (&mut self.debug, &self.window) {
+                    debug.visible = !debug.visible;
+                    let _ = window.set_cursor_hittest(debug.visible);
+                    log::info!("Tray: debug overlay = {}", debug.visible);
+                }
+            }
+            TrayCommand::None => {}
         }
 
         // Poll ESC key (window is click-through so can't receive keyboard events)

@@ -210,6 +210,51 @@ fn cat_sleeping(uv: vec2<f32>) -> f32 {
     return d;
 }
 
+// Procedural cat shape - walking pose B (frame 7, legs swapped for animation)
+fn cat_walking_b(uv: vec2<f32>) -> f32 {
+    let p = uv - vec2<f32>(0.5, 0.5);
+
+    // Body — same as walking A
+    let body = sd_ellipse(p, vec2<f32>(0.0, 0.05), vec2<f32>(0.22, 0.12));
+
+    // Head — same
+    let head = sd_circle(p, vec2<f32>(0.15, -0.08), 0.11);
+
+    // Ears — same
+    let ear_l = sd_triangle(p,
+        vec2<f32>(0.08, -0.16),
+        vec2<f32>(0.12, -0.28),
+        vec2<f32>(0.16, -0.16)
+    );
+    let ear_r = sd_triangle(p,
+        vec2<f32>(0.14, -0.16),
+        vec2<f32>(0.19, -0.28),
+        vec2<f32>(0.23, -0.16)
+    );
+
+    // Front legs — swapped stride positions
+    let leg_fl = sd_ellipse(p, vec2<f32>(0.05, 0.2), vec2<f32>(0.035, 0.1));
+    let leg_fr = sd_ellipse(p, vec2<f32>(0.1, 0.22), vec2<f32>(0.035, 0.1));
+
+    // Back legs — swapped stride positions
+    let leg_bl = sd_ellipse(p, vec2<f32>(-0.17, 0.2), vec2<f32>(0.035, 0.1));
+    let leg_br = sd_ellipse(p, vec2<f32>(-0.12, 0.18), vec2<f32>(0.035, 0.1));
+
+    // Tail — same
+    let tail = sd_ellipse(p, vec2<f32>(-0.25, -0.05), vec2<f32>(0.04, 0.14));
+
+    var d = smin(body, head, 0.05);
+    d = min(d, ear_l);
+    d = min(d, ear_r);
+    d = smin(d, leg_fl, 0.03);
+    d = smin(d, leg_fr, 0.03);
+    d = smin(d, leg_bl, 0.03);
+    d = smin(d, leg_br, 0.03);
+    d = smin(d, tail, 0.04);
+
+    return d;
+}
+
 // SDF heart shape (for love/chase particles)
 fn sd_heart(uv: vec2<f32>) -> f32 {
     let p = (uv - vec2<f32>(0.5, 0.5)) * 2.5;
@@ -263,6 +308,24 @@ fn rotate_uv(uv: vec2<f32>, angle: f32) -> vec2<f32> {
     return vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c) + vec2<f32>(0.5, 0.5);
 }
 
+// Eye glow: two small bright circles on the cat's head.
+// Returns glow intensity (0.0 = no glow, 1.0 = full glow).
+fn eye_glow_sitting(uv: vec2<f32>) -> f32 {
+    let p = uv - vec2<f32>(0.5, 0.5);
+    let eye_l = sd_circle(p, vec2<f32>(-0.055, -0.14), 0.022);
+    let eye_r = sd_circle(p, vec2<f32>(0.055, -0.14), 0.022);
+    let d = min(eye_l, eye_r);
+    return 1.0 - smoothstep(-0.005, 0.005, d);
+}
+
+fn eye_glow_walking(uv: vec2<f32>) -> f32 {
+    let p = uv - vec2<f32>(0.5, 0.5);
+    let eye_l = sd_circle(p, vec2<f32>(0.11, -0.1), 0.02);
+    let eye_r = sd_circle(p, vec2<f32>(0.17, -0.1), 0.02);
+    let d = min(eye_l, eye_r);
+    return 1.0 - smoothstep(-0.005, 0.005, d);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Apply rotation to UVs (for spawn somersault etc.)
@@ -271,12 +334,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         uv = rotate_uv(uv, in.rotation);
     }
 
-    // Select shape based on frame
-    // 0=sitting, 1=walking, 2=sleeping, 3=circle, 4=heart, 5=star, 6=Z-letter
-    var d: f32;
-    let state = in.frame;
+    // Frames 8+ = night glow variant (subtract 8 to get base frame)
+    let has_glow = in.frame >= 8u;
+    let state = select(in.frame, in.frame - 8u, has_glow);
 
-    if state == 6u {
+    // Select shape based on frame
+    // 0=sitting, 1=walking, 2=sleeping, 3=circle, 4=heart, 5=star, 6=Z-letter, 7=walking-B
+    var d: f32;
+
+    if state == 7u {
+        d = cat_walking_b(uv);
+    } else if state == 6u {
         d = sd_z_letter(uv);
     } else if state == 5u {
         d = sd_star(uv);
@@ -301,7 +369,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Slight shading — darken edges for depth
     let shade = mix(0.85, 1.0, smoothstep(0.0, -0.08, d));
-    let col = in.color.rgb * shade;
+    var col = in.color.rgb * shade;
+
+    // Eye glow at night — bright yellow-green dots on head
+    if has_glow && (state == 0u || state == 1u || state == 7u) {
+        var glow: f32;
+        if state == 0u {
+            glow = eye_glow_sitting(uv);
+        } else {
+            glow = eye_glow_walking(uv);
+        }
+        if glow > 0.01 {
+            // Bright yellow-green eyes, additive over cat color
+            let eye_color = vec3<f32>(0.6, 1.0, 0.2);
+            col = mix(col, eye_color, glow);
+        }
+    }
 
     // Premultiplied alpha output
     return vec4<f32>(col * alpha, in.color.a * alpha);

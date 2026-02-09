@@ -47,6 +47,8 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Dwm",
     "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
 ] }
 
 [profile.release]
