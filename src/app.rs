@@ -7,9 +7,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId, WindowLevel};
 
 use crate::cat;
+use crate::debug::timer::{SystemPhase, SystemTimers};
+use crate::debug::DebugOverlay;
 use crate::ecs::components::{Appearance, CatState, Position, PrevPosition};
 use crate::ecs::systems;
 use crate::ecs::systems::interaction::InteractionBuffers;
+use crate::ecs::systems::mouse::CursorState;
 use crate::platform;
 use crate::render::instance::CatInstance;
 use crate::render::GpuState;
@@ -21,65 +24,10 @@ const TICK_RATE: f64 = 1.0 / 60.0;
 const MAX_ACCUMULATOR: f64 = 0.25;
 /// How many cats to spawn on startup.
 const INITIAL_CAT_COUNT: usize = 1000;
-/// How often to log FPS (seconds).
-const FPS_LOG_INTERVAL: f64 = 5.0;
 /// Spatial hash cell size — 2x interaction radius.
 const SPATIAL_CELL_SIZE: f32 = 128.0;
 /// Spatial hash table size (prime-ish for good distribution).
 const SPATIAL_TABLE_SIZE: usize = 1024;
-
-// ---------------------------------------------------------------------------
-// Frame timing (#9)
-// ---------------------------------------------------------------------------
-
-struct FrameStats {
-    frame_count: u64,
-    last_log_time: Instant,
-    frame_time_sum: f64,
-    frame_time_min: f64,
-    frame_time_max: f64,
-    frames_since_log: u32,
-}
-
-impl FrameStats {
-    fn new() -> Self {
-        Self {
-            frame_count: 0,
-            last_log_time: Instant::now(),
-            frame_time_sum: 0.0,
-            frame_time_min: f64::MAX,
-            frame_time_max: 0.0,
-            frames_since_log: 0,
-        }
-    }
-
-    fn record_frame(&mut self, dt: f64) {
-        self.frame_count += 1;
-        self.frames_since_log += 1;
-        self.frame_time_sum += dt;
-        self.frame_time_min = self.frame_time_min.min(dt);
-        self.frame_time_max = self.frame_time_max.max(dt);
-
-        let elapsed = self.last_log_time.elapsed().as_secs_f64();
-        if elapsed >= FPS_LOG_INTERVAL {
-            let avg_ms = (self.frame_time_sum / self.frames_since_log as f64) * 1000.0;
-            let fps = self.frames_since_log as f64 / elapsed;
-            log::info!(
-                "FPS: {:.0} | avg: {:.2}ms | min: {:.2}ms | max: {:.2}ms | total frames: {}",
-                fps,
-                avg_ms,
-                self.frame_time_min * 1000.0,
-                self.frame_time_max * 1000.0,
-                self.frame_count,
-            );
-            self.last_log_time = Instant::now();
-            self.frame_time_sum = 0.0;
-            self.frame_time_min = f64::MAX;
-            self.frame_time_max = 0.0;
-            self.frames_since_log = 0;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // App
@@ -89,6 +37,9 @@ impl FrameStats {
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
+
+    // Debug overlay (initialized after GPU)
+    debug: Option<DebugOverlay>,
 
     // ECS
     world: hecs::World,
@@ -102,6 +53,9 @@ struct App {
     // Interaction buffers (pre-allocated, reused each tick)
     interaction_bufs: InteractionBuffers,
 
+    // Cursor tracking (speed, still timer)
+    cursor_state: CursorState,
+
     // RNG (shared, deterministic per session)
     rng: fastrand::Rng,
 
@@ -109,9 +63,6 @@ struct App {
     last_frame_time: Option<Instant>,
     accumulator: f64,
     tick_count: u64,
-
-    // Frame timing
-    frame_stats: FrameStats,
 
     // Screen dimensions
     screen_w: u32,
@@ -126,15 +77,16 @@ impl App {
         Self {
             window: None,
             gpu: None,
+            debug: None,
             world: hecs::World::new(),
             spatial_grid: SpatialHash::new(SPATIAL_CELL_SIZE, SPATIAL_TABLE_SIZE),
             snapshots: Vec::with_capacity(INITIAL_CAT_COUNT),
             interaction_bufs: InteractionBuffers::new(INITIAL_CAT_COUNT),
+            cursor_state: CursorState::new(),
             rng: fastrand::Rng::new(),
             last_frame_time: None,
             accumulator: 0.0,
             tick_count: 0,
-            frame_stats: FrameStats::new(),
             screen_w: 0,
             screen_h: 0,
             instance_buf: Vec::with_capacity(INITIAL_CAT_COUNT),
@@ -155,6 +107,12 @@ impl App {
         #[cfg(not(windows))]
         let (mouse_x, mouse_y) = (0.0f32, 0.0f32);
 
+        // Borrow timers from debug overlay (or use a throwaway).
+        let timers = match &mut self.debug {
+            Some(d) => &mut d.system_timers,
+            None => return,
+        };
+
         while self.accumulator >= TICK_RATE {
             systems::tick(
                 &mut self.world,
@@ -163,10 +121,12 @@ impl App {
                 self.screen_h as f32,
                 mouse_x,
                 mouse_y,
+                &mut self.cursor_state,
                 &mut self.rng,
                 &mut self.spatial_grid,
                 &mut self.snapshots,
                 &mut self.interaction_bufs,
+                timers,
             );
 
             self.accumulator -= TICK_RATE;
@@ -180,7 +140,8 @@ impl App {
     }
 
     /// Build instance buffer from ECS world for rendering.
-    fn build_instances(&mut self) {
+    fn build_instances(&mut self, timers: &mut SystemTimers) {
+        timers.begin();
         self.instance_buf.clear();
         let alpha = self.interpolation_alpha();
 
@@ -191,6 +152,31 @@ impl App {
         {
             self.instance_buf
                 .push(CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha));
+        }
+        timers.end(SystemPhase::BuildInstances);
+    }
+
+    /// Spawn or despawn cats to match target count.
+    fn sync_cat_count(&mut self, target: usize) {
+        let current = self.world.len() as usize;
+        if target > current {
+            cat::spawn_cats(
+                &mut self.world,
+                target - current,
+                self.screen_w as f32,
+                self.screen_h as f32,
+            );
+        } else if target < current {
+            let to_remove = current - target;
+            let entities: Vec<hecs::Entity> = self
+                .world
+                .iter()
+                .take(to_remove)
+                .map(|e| e.entity())
+                .collect();
+            for entity in entities {
+                let _ = self.world.despawn(entity);
+            }
         }
     }
 }
@@ -243,8 +229,13 @@ impl ApplicationHandler for App {
 
         // Initialize wgpu + pipeline
         let gpu = GpuState::new(window.clone());
+
+        // Initialize debug overlay
+        let debug = DebugOverlay::new(&window, &gpu);
+
         self.gpu = Some(gpu);
-        log::info!("wgpu + cat pipeline initialized");
+        self.debug = Some(debug);
+        log::info!("wgpu + cat pipeline + debug overlay initialized");
 
         // Spawn cats
         cat::spawn_cats(
@@ -274,6 +265,20 @@ impl ApplicationHandler for App {
             return;
         }
 
+        // Poll F12 for debug overlay toggle
+        #[cfg(windows)]
+        {
+            let f12_down = platform::win32::is_f12_pressed();
+            if let (Some(debug), Some(window)) = (&mut self.debug, &self.window) {
+                if debug.poll_toggle(f12_down) {
+                    // When visible: enable click-through so user can interact with egui.
+                    // When hidden: restore click-through so clicks go to desktop.
+                    let _ = window.set_cursor_hittest(debug.visible);
+                    log::info!("Debug overlay: {}", if debug.visible { "shown" } else { "hidden" });
+                }
+            }
+        }
+
         if let Some(w) = &self.window {
             w.request_redraw();
         }
@@ -285,6 +290,16 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Forward events to egui when overlay is visible
+        if let (Some(debug), Some(window)) = (&mut self.debug, &self.window) {
+            if debug.visible {
+                let consumed = debug.on_window_event(window, &event);
+                if consumed {
+                    return;
+                }
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("Close requested, exiting");
@@ -303,21 +318,133 @@ impl ApplicationHandler for App {
                 if let Some(last) = self.last_frame_time {
                     let dt = now.duration_since(last).as_secs_f64();
 
-                    // Frame stats
-                    self.frame_stats.record_frame(dt);
+                    // Record frame time in debug overlay
+                    if let Some(debug) = &mut self.debug {
+                        debug.record_frame(dt);
+                    }
 
-                    // Fixed timestep sim
-                    self.run_fixed_update(dt);
+                    // Fixed timestep sim (unless paused)
+                    let paused = self.debug.as_ref().map_or(false, |d| d.paused);
+                    if !paused {
+                        self.run_fixed_update(dt);
+                    }
                 }
                 self.last_frame_time = Some(now);
 
-                // --- Build instance buffer from ECS ---
-                self.build_instances();
+                // Sync cat count if slider changed
+                if let Some(debug) = &self.debug {
+                    let target = debug.target_cat_count;
+                    if target != self.world.len() as usize {
+                        self.sync_cat_count(target);
+                    }
+                }
+
+                // Handle present mode change
+                if let (Some(debug), Some(gpu)) = (&mut self.debug, &mut self.gpu) {
+                    if debug.present_mode_changed {
+                        debug.present_mode_changed = false;
+                        gpu.set_present_mode(debug.selected_present_mode());
+                    }
+                }
+
+                // Update entity count / tick count in overlay
+                if let Some(debug) = &mut self.debug {
+                    debug.entity_count = self.world.len() as usize;
+                    debug.tick_count = self.tick_count;
+                }
+
+                // --- Build instance buffer from ECS (timed) ---
+                // We need to borrow debug.system_timers mutably, but also need self.
+                // Extract the timers temporarily.
+                let mut timers_temp = self
+                    .debug
+                    .as_mut()
+                    .map(|d| std::mem::replace(&mut d.system_timers, SystemTimers::new()));
+                if let Some(timers) = &mut timers_temp {
+                    self.build_instances(timers);
+                } else {
+                    self.instance_buf.clear();
+                }
+
+                // --- GPU upload (timed) ---
+                if let Some(timers) = &mut timers_temp {
+                    timers.begin();
+                }
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.update_instances(&self.instance_buf);
+                }
+                if let Some(timers) = &mut timers_temp {
+                    timers.end(SystemPhase::GpuUpload);
+                }
+
+                // Put timers back
+                if let (Some(debug), Some(timers)) = (&mut self.debug, timers_temp) {
+                    debug.system_timers = timers;
+                }
+
+                // --- Run egui frame ---
+                let egui_output = if let (Some(debug), Some(window)) =
+                    (&mut self.debug, &self.window)
+                {
+                    if debug.visible {
+                        Some(debug.run_frame(window, self.screen_w, self.screen_h))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 // --- Render ---
                 if let Some(gpu) = &mut self.gpu {
-                    gpu.update_instances(&self.instance_buf);
-                    gpu.render_frame();
+                    let Some(mut frame) = gpu.begin_frame() else {
+                        return;
+                    };
+
+                    // Time the render submit phase
+                    if let Some(debug) = &mut self.debug {
+                        debug.system_timers.begin();
+                    }
+
+                    // Cat render pass
+                    gpu.draw_cats(&mut frame.encoder, &frame.view);
+
+                    // Egui render pass (if visible)
+                    let mut extra_cmd_bufs = Vec::new();
+                    if let Some((ref primitives, ref textures_delta, ref screen_desc)) =
+                        egui_output
+                    {
+                        if let Some(debug) = &mut self.debug {
+                            let bufs = debug.prepare_egui(
+                                &gpu.device,
+                                &gpu.queue,
+                                &mut frame.encoder,
+                                primitives,
+                                textures_delta,
+                                screen_desc,
+                            );
+                            extra_cmd_bufs = bufs;
+
+                            {
+                                let mut egui_pass =
+                                    GpuState::begin_egui_pass(&mut frame.encoder, &frame.view);
+                                debug.render_egui(&mut egui_pass, primitives, screen_desc);
+                            }
+                        }
+                    }
+
+                    if let Some(debug) = &mut self.debug {
+                        debug.system_timers.end(SystemPhase::RenderSubmit);
+                    }
+
+                    gpu.finish_frame(frame.encoder, frame.output, extra_cmd_bufs);
+
+                    // Free egui textures after present
+                    if let Some((_, ref textures_delta, _)) = egui_output {
+                        if let Some(debug) = &mut self.debug {
+                            debug.free_textures(textures_delta);
+                        }
+                    }
                 }
             }
             _ => {}
