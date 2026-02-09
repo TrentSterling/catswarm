@@ -14,10 +14,10 @@ pub struct CatInstance {
     pub size: f32,
     /// RGBA color packed as u32.
     pub color: u32,
-    /// Animation frame index (0=sitting, 1=walking, 2=sleeping).
+    /// Animation frame index (0=sitting, 1=walking, 2=sleeping, 3=circle).
     pub frame: u32,
-    /// Padding for 24-byte alignment.
-    pub _pad: u32,
+    /// Rotation angle in radians (used for spawn somersault).
+    pub rotation: f32,
 }
 
 impl CatInstance {
@@ -51,7 +51,7 @@ impl CatInstance {
             size: appearance.size,
             color: appearance.color,
             frame,
-            _pad: 0,
+            rotation: 0.0,
         }
     }
 }

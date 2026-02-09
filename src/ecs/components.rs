@@ -76,3 +76,16 @@ pub struct InteractionTarget(pub hecs::Entity);
 pub struct SleepingPile {
     pub breathing_offset: f32,
 }
+
+/// Spawn drop-in animation. Cat falls from top of screen, somersaults, lands on feet.
+#[derive(Debug, Clone, Copy)]
+pub struct SpawnAnimation {
+    /// Where the cat should land.
+    pub target_y: f32,
+    /// Progress 0.0 (top of screen) to 1.0 (landed).
+    pub progress: f32,
+    /// Animation speed (randomized so cats don't all land at the same time).
+    pub speed: f32,
+    /// Number of somersault rotations (0 = no flip, 1-3 = tumble).
+    pub flips: u8,
+}

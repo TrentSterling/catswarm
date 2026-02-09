@@ -11,6 +11,7 @@ struct InstanceInput {
     @location(3) size: f32,
     @location(4) color: u32,
     @location(5) frame: u32,
+    @location(6) rotation: f32,
 };
 
 struct VertexOutput {
@@ -18,6 +19,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) @interpolate(flat) frame: u32,
+    @location(3) rotation: f32,
 };
 
 @group(0) @binding(0)
@@ -37,6 +39,7 @@ fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.clip_position = vec4<f32>(clip, 0.0, 1.0);
     out.uv = vert.uv;
     out.frame = inst.frame;
+    out.rotation = inst.rotation;
 
     // Unpack RGBA from u32
     let r = f32((inst.color >> 24u) & 0xFFu) / 255.0;
@@ -207,19 +210,36 @@ fn cat_sleeping(uv: vec2<f32>) -> f32 {
     return d;
 }
 
+// Rotate a 2D point around (0.5, 0.5)
+fn rotate_uv(uv: vec2<f32>, angle: f32) -> vec2<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    let p = uv - vec2<f32>(0.5, 0.5);
+    return vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c) + vec2<f32>(0.5, 0.5);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Apply rotation to UVs (for spawn somersault etc.)
+    var uv = in.uv;
+    if abs(in.rotation) > 0.001 {
+        uv = rotate_uv(uv, in.rotation);
+    }
+
     // Select cat shape based on frame/state
-    // frame encoding: 0=idle/groom, 1=walk/run/chase, 2=sleep
+    // frame encoding: 0=idle/groom, 1=walk/run/chase, 2=sleep, 3=circle
     var d: f32;
     let state = in.frame;
 
-    if state == 2u {
-        d = cat_sleeping(in.uv);
+    if state == 3u {
+        // Simple circle (used for laser dot, yarn ball, particles)
+        d = sd_circle(uv, vec2<f32>(0.5, 0.5), 0.25);
+    } else if state == 2u {
+        d = cat_sleeping(uv);
     } else if state == 1u {
-        d = cat_walking(in.uv);
+        d = cat_walking(uv);
     } else {
-        d = cat_sitting(in.uv);
+        d = cat_sitting(uv);
     }
 
     // Anti-aliased edge

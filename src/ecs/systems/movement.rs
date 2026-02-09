@@ -13,6 +13,10 @@ const HEAT_AVOIDANCE: f32 = 40.0;
 const HEAT_THRESHOLD: f32 = 0.3;
 /// Edge affinity pull strength.
 const EDGE_PULL: f32 = 12.0;
+/// Edge repulsion zone — cats within this distance of screen edge get pushed inward.
+const EDGE_REPULSION_ZONE: f32 = 80.0;
+/// Edge repulsion strength (scales linearly as cat approaches edge).
+const EDGE_REPULSION_STRENGTH: f32 = 60.0;
 
 /// Integrate velocity into position. Apply friction/damping.
 /// Screen bounds clamping keeps cats on-screen.
@@ -64,6 +68,33 @@ pub fn integrate(
             }
         }
 
+        // Soft edge repulsion: push cats away from screen edges to prevent bunching.
+        // Strength ramps linearly from 0 at EDGE_REPULSION_ZONE to full at margin.
+        {
+            let margin = 8.0;
+            let zone = EDGE_REPULSION_ZONE;
+            // Left edge
+            if pos.0.x < margin + zone {
+                let t = 1.0 - ((pos.0.x - margin) / zone).clamp(0.0, 1.0);
+                vel.0.x += t * EDGE_REPULSION_STRENGTH;
+            }
+            // Right edge
+            if pos.0.x > screen_w - margin - zone {
+                let t = 1.0 - ((screen_w - margin - pos.0.x) / zone).clamp(0.0, 1.0);
+                vel.0.x -= t * EDGE_REPULSION_STRENGTH;
+            }
+            // Top edge
+            if pos.0.y < margin + zone {
+                let t = 1.0 - ((pos.0.y - margin) / zone).clamp(0.0, 1.0);
+                vel.0.y += t * EDGE_REPULSION_STRENGTH;
+            }
+            // Bottom edge
+            if pos.0.y > screen_h - margin - zone {
+                let t = 1.0 - ((screen_h - margin - pos.0.y) / zone).clamp(0.0, 1.0);
+                vel.0.y -= t * EDGE_REPULSION_STRENGTH;
+            }
+        }
+
         // Integrate velocity
         pos.0 += vel.0 * dt;
 
@@ -75,7 +106,7 @@ pub fn integrate(
             vel.0 = Vec2::ZERO;
         }
 
-        // Clamp to screen bounds (with small margin so cats stay visible)
+        // Hard clamp to screen bounds (safety net, should rarely trigger now)
         let margin = 8.0;
         pos.0.x = pos.0.x.clamp(margin, screen_w - margin);
         pos.0.y = pos.0.y.clamp(margin, screen_h - margin);

@@ -125,6 +125,12 @@ pub fn is_f12_pressed() -> bool {
     unsafe { GetAsyncKeyState(0x7B) & 1 != 0 }
 }
 
+/// Check if Y key was pressed since last call (yarn ball hotkey).
+pub fn is_y_pressed() -> bool {
+    // VK_Y = 0x59
+    unsafe { GetAsyncKeyState(0x59) & 1 != 0 }
+}
+
 /// Check if F11 was pressed since last call (mode cycle hotkey).
 pub fn is_f11_pressed() -> bool {
     // VK_F11 = 0x7A
@@ -158,11 +164,15 @@ pub fn get_local_hour() -> f32 {
 }
 
 /// Get mouse button states. Returns (left_down, right_down, middle_down).
+/// Middle button checks both held state and transition bit for quick clicks.
 pub fn get_mouse_buttons() -> (bool, bool, bool) {
     unsafe {
         let left = GetAsyncKeyState(0x01) & (0x8000u16 as i16) != 0; // VK_LBUTTON
         let right = GetAsyncKeyState(0x02) & (0x8000u16 as i16) != 0; // VK_RBUTTON
-        let middle = GetAsyncKeyState(0x04) & (0x8000u16 as i16) != 0; // VK_MBUTTON
+        // Middle button: check both held (high bit) and transition (low bit)
+        // to catch quick scroll-wheel clicks that may release between polls
+        let mid_state = GetAsyncKeyState(0x04); // VK_MBUTTON
+        let middle = (mid_state & (0x8000u16 as i16) != 0) || (mid_state & 1 != 0);
         (left, right, middle)
     }
 }
