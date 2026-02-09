@@ -17,6 +17,18 @@ const SEPARATION_STRENGTH: f32 = 50.0;
 /// Max separation velocity contribution per tick.
 const MAX_SEPARATION: f32 = 30.0;
 
+/// Flocking radius — cats within this steer together (cohesion + alignment).
+const FLOCK_RADIUS: f32 = 120.0;
+const FLOCK_RADIUS_SQ: f32 = FLOCK_RADIUS * FLOCK_RADIUS;
+/// Cohesion strength — pull toward local center of mass.
+const COHESION_STRENGTH: f32 = 8.0;
+/// Max cohesion velocity contribution per tick.
+const MAX_COHESION: f32 = 15.0;
+/// Alignment strength — match neighbors' average heading.
+const ALIGNMENT_STRENGTH: f32 = 5.0;
+/// Max alignment velocity contribution per tick.
+const MAX_ALIGNMENT: f32 = 12.0;
+
 /// Social interactions happen within this range.
 const INTERACTION_RADIUS: f32 = 60.0;
 const INTERACTION_RADIUS_SQ: f32 = INTERACTION_RADIUS * INTERACTION_RADIUS;
@@ -107,6 +119,10 @@ struct ActiveInteraction {
 pub struct InteractionBuffers {
     commands: Vec<InteractionCmd>,
     separation: Vec<Vec2>,
+    cohesion_sum: Vec<Vec2>,
+    cohesion_count: Vec<u32>,
+    alignment_sum: Vec<Vec2>,
+    alignment_count: Vec<u32>,
     active: Vec<ActiveInteraction>,
 }
 
@@ -115,6 +131,10 @@ impl InteractionBuffers {
         Self {
             commands: Vec::with_capacity(64),
             separation: vec![Vec2::ZERO; capacity],
+            cohesion_sum: vec![Vec2::ZERO; capacity],
+            cohesion_count: vec![0; capacity],
+            alignment_sum: vec![Vec2::ZERO; capacity],
+            alignment_count: vec![0; capacity],
             active: Vec::with_capacity(64),
         }
     }
@@ -253,10 +273,19 @@ fn phase_read(
 ) {
     bufs.commands.clear();
 
-    // Ensure separation buffer is big enough and zeroed
-    bufs.separation.resize(snapshots.len(), Vec2::ZERO);
-    for s in bufs.separation.iter_mut() {
-        *s = Vec2::ZERO;
+    // Ensure buffers are big enough and zeroed
+    let len = snapshots.len();
+    bufs.separation.resize(len, Vec2::ZERO);
+    bufs.cohesion_sum.resize(len, Vec2::ZERO);
+    bufs.cohesion_count.resize(len, 0);
+    bufs.alignment_sum.resize(len, Vec2::ZERO);
+    bufs.alignment_count.resize(len, 0);
+    for i in 0..len {
+        bufs.separation[i] = Vec2::ZERO;
+        bufs.cohesion_sum[i] = Vec2::ZERO;
+        bufs.cohesion_count[i] = 0;
+        bufs.alignment_sum[i] = Vec2::ZERO;
+        bufs.alignment_count[i] = 0;
     }
 
     let count = snapshots.len();
@@ -281,12 +310,32 @@ fn phase_read(
             let delta = me.pos - them.pos;
             let dist_sq = delta.length_squared();
 
-            // --- Separation (always applies) ---
+            // --- Separation (always applies, close range) ---
             if dist_sq < SEPARATION_RADIUS_SQ && dist_sq > 0.001 {
                 let dist = dist_sq.sqrt();
                 let overlap = SEPARATION_RADIUS - dist;
                 let push = delta / dist * overlap * SEPARATION_STRENGTH;
                 bufs.separation[my_idx] += push;
+            }
+
+            // --- Flocking: cohesion + alignment (wider range, mobile cats only) ---
+            if dist_sq < FLOCK_RADIUS_SQ {
+                let both_mobile = matches!(
+                    me.state,
+                    BehaviorState::Idle | BehaviorState::Walking | BehaviorState::Running
+                ) && matches!(
+                    them.state,
+                    BehaviorState::Idle | BehaviorState::Walking | BehaviorState::Running
+                );
+                if both_mobile {
+                    // Cohesion: accumulate neighbor positions
+                    bufs.cohesion_sum[my_idx] += them.pos;
+                    bufs.cohesion_count[my_idx] += 1;
+
+                    // Alignment: accumulate neighbor velocities
+                    bufs.alignment_sum[my_idx] += them.vel;
+                    bufs.alignment_count[my_idx] += 1;
+                }
             }
 
             // --- Social interactions (only process each pair once) ---
@@ -455,15 +504,40 @@ fn phase_write(
     snapshots: &[CatSnapshot],
     rng: &mut fastrand::Rng,
 ) {
-    // Apply separation velocities
+    // Apply separation + cohesion + alignment velocities
     for (idx, snap) in snapshots.iter().enumerate() {
+        let mut total_force = Vec2::ZERO;
+
+        // Separation
         let sep = bufs.separation[idx];
-        if sep.length_squared() < 0.01 {
+        if sep.length_squared() > 0.01 {
+            total_force += clamp_length(sep, MAX_SEPARATION);
+        }
+
+        // Cohesion: steer toward center of nearby cats
+        if bufs.cohesion_count[idx] > 0 {
+            let center = bufs.cohesion_sum[idx] / bufs.cohesion_count[idx] as f32;
+            let to_center = center - snap.pos;
+            if to_center.length_squared() > 1.0 {
+                let cohesion = to_center.normalize() * COHESION_STRENGTH;
+                total_force += clamp_length(cohesion, MAX_COHESION);
+            }
+        }
+
+        // Alignment: steer toward average heading of neighbors
+        if bufs.alignment_count[idx] > 0 {
+            let avg_vel = bufs.alignment_sum[idx] / bufs.alignment_count[idx] as f32;
+            if avg_vel.length_squared() > 1.0 {
+                let alignment = (avg_vel.normalize() * ALIGNMENT_STRENGTH) - snap.vel.normalize_or_zero() * ALIGNMENT_STRENGTH;
+                total_force += clamp_length(alignment, MAX_ALIGNMENT);
+            }
+        }
+
+        if total_force.length_squared() < 0.01 {
             continue;
         }
-        let clamped = clamp_length(sep, MAX_SEPARATION);
         if let Ok(mut vel) = world.get::<&mut Velocity>(snap.entity) {
-            vel.0 += clamped;
+            vel.0 += total_force;
         }
     }
 

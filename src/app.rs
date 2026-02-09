@@ -27,7 +27,13 @@ const TICK_RATE: f64 = 1.0 / 60.0;
 /// Max accumulated time before we clamp (prevents spiral of death).
 const MAX_ACCUMULATOR: f64 = 0.25;
 /// How many cats to spawn on startup.
-const INITIAL_CAT_COUNT: usize = 1000;
+const INITIAL_CAT_COUNT: usize = 20;
+/// Target population that the colony grows toward.
+const TARGET_CAT_COUNT: usize = 1000;
+/// Cats spawned per second during growth phase.
+const POPULATION_GROWTH_RATE: f64 = 2.0;
+/// Seconds to wait before population starts growing.
+const GROWTH_DELAY: f64 = 5.0;
 /// Spatial hash cell size — 2x interaction radius.
 const SPATIAL_CELL_SIZE: f32 = 128.0;
 /// Spatial hash table size (prime-ish for good distribution).
@@ -78,6 +84,10 @@ struct App {
     accumulator: f64,
     tick_count: u64,
 
+    // Population growth
+    elapsed_time: f64,
+    spawn_accumulator: f64,
+
     // Screen dimensions
     screen_w: u32,
     screen_h: u32,
@@ -105,6 +115,8 @@ impl App {
             last_frame_time: None,
             accumulator: 0.0,
             tick_count: 0,
+            elapsed_time: 0.0,
+            spawn_accumulator: 0.0,
             screen_w: 0,
             screen_h: 0,
             instance_buf: Vec::with_capacity(INITIAL_CAT_COUNT),
@@ -415,10 +427,30 @@ impl ApplicationHandler for App {
                     if !paused {
                         self.run_fixed_update(dt);
                     }
+
+                    // Population growth: gradually spawn cats up to target
+                    self.elapsed_time += dt;
+                    if self.elapsed_time > GROWTH_DELAY {
+                        let current = self.world.len() as usize;
+                        if current < TARGET_CAT_COUNT {
+                            self.spawn_accumulator += dt * POPULATION_GROWTH_RATE;
+                            let to_spawn = self.spawn_accumulator as usize;
+                            if to_spawn > 0 {
+                                self.spawn_accumulator -= to_spawn as f64;
+                                let actual = to_spawn.min(TARGET_CAT_COUNT - current);
+                                cat::spawn_cats(
+                                    &mut self.world,
+                                    actual,
+                                    self.screen_w as f32,
+                                    self.screen_h as f32,
+                                );
+                            }
+                        }
+                    }
                 }
                 self.last_frame_time = Some(now);
 
-                // Sync cat count if slider changed
+                // Sync cat count if slider changed (overrides natural growth)
                 if let Some(debug) = &self.debug {
                     let target = debug.target_cat_count;
                     if target != self.world.len() as usize {

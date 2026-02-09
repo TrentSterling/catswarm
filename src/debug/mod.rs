@@ -108,7 +108,7 @@ impl DebugOverlay {
             frame_time_max: 0.0,
             system_timers: SystemTimers::new(),
             paused: false,
-            target_cat_count: 1000,
+            target_cat_count: 20,
             present_mode_index: 0, // Mailbox
             present_mode_changed: false,
             entity_count: 0,
