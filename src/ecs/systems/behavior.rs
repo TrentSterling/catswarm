@@ -75,6 +75,12 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng, energy_
                 // Wind-up phase: cat crouches, wiggles butt (velocity=0).
                 // When timer expires, the interaction system handles the leap.
             }
+            BehaviorState::Fighting => {
+                // Cats swipe at each other — jitter in place with small random velocity
+                let jitter_x = (rng.f32() - 0.5) * 60.0;
+                let jitter_y = (rng.f32() - 0.5) * 40.0;
+                vel.0 = Vec2::new(jitter_x, jitter_y);
+            }
         }
 
         if state.timer <= 0.0 {
@@ -113,6 +119,15 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng, energy_
                     // If no target found, just go idle.
                     state.state = BehaviorState::Idle;
                     state.timer = 0.5 + rng.f32() * 1.0;
+                    continue;
+                }
+                BehaviorState::Fighting => {
+                    // Fight over — this cat "wins" (loser gets startled by interaction system).
+                    // Winner hisses then walks away smugly.
+                    state.state = BehaviorState::Walking;
+                    state.timer = 1.0 + rng.f32() * 2.0;
+                    let angle = rng.f32() * std::f32::consts::TAU;
+                    vel.0 = Vec2::new(angle.cos(), angle.sin()) * WALK_SPEED * 0.8;
                     continue;
                 }
                 _ => {}

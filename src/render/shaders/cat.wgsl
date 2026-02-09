@@ -275,6 +275,21 @@ fn sd_box_shape(uv: vec2<f32>) -> f32 {
     return min(min(box_body, flap_l), flap_r);
 }
 
+// SDF water glass (frame 10) — trapezoid with circle rim
+fn sd_glass(uv: vec2<f32>) -> f32 {
+    let p = uv - vec2<f32>(0.5, 0.5);
+    // Glass body: trapezoid (wider at top)
+    let top_w = 0.22;
+    let bot_w = 0.15;
+    let h = 0.30;
+    let t = (p.y + h * 0.5) / h; // 0 at bottom, 1 at top
+    let w = mix(bot_w, top_w, clamp(t, 0.0, 1.0));
+    let body = max(abs(p.x) - w, abs(p.y) - h * 0.5);
+    // Rim: thin ellipse at top
+    let rim = sd_ellipse(p, vec2<f32>(0.0, -h * 0.5), vec2<f32>(top_w + 0.02, 0.03));
+    return min(body, rim);
+}
+
 // SDF heart shape (for love/chase particles)
 fn sd_heart(uv: vec2<f32>) -> f32 {
     let p = (uv - vec2<f32>(0.5, 0.5)) * 2.5;
@@ -362,7 +377,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 0=sitting, 1=walking, 2=sleeping, 3=circle, 4=heart, 5=star, 6=Z-letter, 7=walking-B
     var d: f32;
 
-    if state == 9u {
+    if state == 10u {
+        d = sd_glass(uv);
+    } else if state == 9u {
         d = sd_box_shape(uv);
     } else if state == 7u {
         d = cat_walking_b(uv);

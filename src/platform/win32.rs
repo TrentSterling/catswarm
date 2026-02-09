@@ -137,6 +137,12 @@ pub fn is_b_pressed() -> bool {
     unsafe { GetAsyncKeyState(0x42) & 1 != 0 }
 }
 
+/// Check if G key was pressed since last call (water glass hotkey).
+pub fn is_g_pressed() -> bool {
+    // VK_G = 0x47
+    unsafe { GetAsyncKeyState(0x47) & 1 != 0 }
+}
+
 /// Check if F11 was pressed since last call (mode cycle hotkey).
 pub fn is_f11_pressed() -> bool {
     // VK_F11 = 0x7A

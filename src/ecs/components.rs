@@ -37,6 +37,7 @@ pub enum BehaviorState {
     Yawning,
     Parading,
     Pouncing,
+    Fighting,
 }
 
 /// Cat name for tooltips.

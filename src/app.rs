@@ -27,7 +27,7 @@ use crate::render::GpuState;
 use crate::spatial::{CatSnapshot, SpatialHash};
 use crate::daynight::DayNightState;
 use crate::particles::ParticleSystem;
-use crate::toy::{Boxes, YarnBalls};
+use crate::toy::{Boxes, Glasses, YarnBalls};
 use crate::tray::{TrayCommand, TrayIcon};
 
 /// Target simulation tick rate (seconds per tick).
@@ -87,6 +87,7 @@ struct App {
     // Toys
     yarn_balls: YarnBalls,
     boxes: Boxes,
+    glasses: Glasses,
 
     // Emotion particles
     particles: ParticleSystem,
@@ -138,6 +139,7 @@ impl App {
             heatmap: Heatmap::new(1.0, 1.0),
             yarn_balls: YarnBalls::new(),
             boxes: Boxes::new(),
+            glasses: Glasses::new(),
             particles: ParticleSystem::new(),
             daynight: DayNightState::new(),
             tray: TrayIcon::new(),
@@ -204,11 +206,31 @@ impl App {
             // Update box lifetimes
             self.boxes.update(TICK_RATE as f32);
 
+            // Update glass physics
+            let shattered = self.glasses.update(
+                TICK_RATE as f32,
+                self.screen_w as f32,
+                self.screen_h as f32,
+            );
+            // Spawn shatter particles for broken glasses
+            if self.particles.enabled {
+                for spos in &shattered {
+                    self.particles.spawn_burst(*spos, 15, 0x88CCFFEE, 5, &mut self.rng);
+                }
+            }
+
             // B key spawns a cardboard box at cursor
             #[cfg(windows)]
             if platform::win32::is_b_pressed() {
                 self.boxes.spawn(mouse_vec);
                 log::info!("Cardboard box placed at ({:.0}, {:.0})", mouse_vec.x, mouse_vec.y);
+            }
+
+            // G key spawns a water glass at cursor
+            #[cfg(windows)]
+            if platform::win32::is_g_pressed() {
+                self.glasses.spawn(mouse_vec);
+                log::info!("Water glass placed at ({:.0}, {:.0})", mouse_vec.x, mouse_vec.y);
             }
 
             systems::tick(
@@ -230,7 +252,7 @@ impl App {
                 energy_scale,
             );
 
-            // Click interactions (startle, treats, laser, yarn ball, boxes)
+            // Click interactions (startle, treats, laser, yarn ball, boxes, glasses)
             systems::click::update(
                 &mut self.world,
                 &self.click_state,
@@ -238,6 +260,7 @@ impl App {
                 &mut self.rng,
                 &mut self.yarn_balls,
                 &mut self.boxes,
+                &mut self.glasses,
             );
 
             // Advance spawn drop-in animations — collect bounce impacts for dust
@@ -358,6 +381,13 @@ impl App {
                 inst.size[1] *= 1.0 + puff;
             }
 
+            // --- Fur puffing during fights (sustained, with rapid oscillation) ---
+            if cat_state.state == BehaviorState::Fighting {
+                let puff = 0.25 + (time * 20.0).sin().abs() * 0.1;
+                inst.size[0] *= 1.0 + puff;
+                inst.size[1] *= 1.0 + puff;
+            }
+
             // --- Squash & stretch based on velocity ---
             let speed = vel.0.length();
             // Falling/jumping: stretch vertically (taller, thinner)
@@ -457,6 +487,23 @@ impl App {
                 size: [3.0, 3.0],
                 color: (0xC4 << 24) | (0x8A << 16) | (0x3F << 8) | alpha,
                 frame: 9,
+                rotation: 0.0,
+            });
+        }
+
+        // Render water glasses
+        for glass in &self.glasses.glasses {
+            if glass.shattered {
+                continue;
+            }
+            let fade = (glass.lifetime / 5.0).clamp(0.0, 1.0);
+            let alpha = (fade * 255.0) as u32;
+            // Light blue glass color
+            self.instance_buf.push(CatInstance {
+                position: glass.pos.into(),
+                size: [2.0, 2.5],
+                color: (0x88 << 24) | (0xCC << 16) | (0xFF << 8) | alpha,
+                frame: 10,
                 rotation: 0.0,
             });
         }
@@ -1097,6 +1144,7 @@ fn mood_color(state: BehaviorState) -> (f32, f32, f32) {
         BehaviorState::Startled => (1.0, 0.9, 0.2),                // bright yellow
         BehaviorState::Yawning => (0.5, 0.5, 0.8),                 // muted blue
         BehaviorState::Pouncing => (1.0, 0.5, 0.0),                // orange (hunting)
+        BehaviorState::Fighting => (1.0, 0.1, 0.1),                // angry red
     }
 }
 
