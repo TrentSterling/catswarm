@@ -1,7 +1,8 @@
 use glam::Vec2;
 
 use crate::ecs::components::{
-    BehaviorState, CatState, InteractionTarget, Position, SleepingPile, Velocity,
+    BehaviorState, CatState, GiftCarrier, InteractionTarget, Position, SleepingPile, Velocity,
+    Personality,
 };
 use crate::spatial::{CatSnapshot, SpatialHash};
 
@@ -37,6 +38,10 @@ const INTERACTION_RADIUS_SQ: f32 = INTERACTION_RADIUS * INTERACTION_RADIUS;
 const PLAY_CHANCE: f32 = 0.008;
 /// Per-tick probability one cat chases another.
 const CHASE_CHANCE: f32 = 0.005;
+/// Per-tick probability a cat pounces on another.
+const POUNCE_CHANCE: f32 = 0.002;
+/// Pounce leap speed.
+const POUNCE_LEAP_SPEED: f32 = 350.0;
 /// Per-tick probability an idle cat joins a sleeping neighbor.
 const NAP_CLUSTER_CHANCE: f32 = 0.015;
 
@@ -110,6 +115,10 @@ enum InteractionCmd {
     SeedYawn {
         entity: hecs::Entity,
     },
+    StartPounce {
+        pouncer: hecs::Entity,
+        target: hecs::Entity,
+    },
 }
 
 struct ActiveInteraction {
@@ -162,6 +171,13 @@ impl InteractionBuffers {
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/// Gift spawn chance per tick (for idle curious cats).
+const GIFT_SPAWN_CHANCE: f32 = 0.0003;
+/// Gift carry speed.
+const GIFT_CARRY_SPEED: f32 = 55.0;
+/// Gift drop distance to cursor.
+const GIFT_DROP_DIST: f32 = 60.0;
+
 pub fn update(
     world: &mut hecs::World,
     snapshots: &[CatSnapshot],
@@ -169,6 +185,7 @@ pub fn update(
     bufs: &mut InteractionBuffers,
     rng: &mut fastrand::Rng,
     dt: f32,
+    mouse_pos: Vec2,
 ) {
     // Phase A: Steer cats already in ChasingCat/Playing states
     steer_active(world, bufs, rng);
@@ -181,6 +198,91 @@ pub fn update(
 
     // Phase D: Sleeping pile management
     phase_sleeping_piles(world, snapshots, bufs, rng);
+
+    // Phase E: Gift giving — cats carry gifts to cursor
+    phase_gifts(world, rng, dt, mouse_pos);
+}
+
+fn phase_gifts(
+    world: &mut hecs::World,
+    rng: &mut fastrand::Rng,
+    dt: f32,
+    mouse_pos: Vec2,
+) {
+    // Steer existing gift carriers toward cursor
+    let mut delivered: Vec<(hecs::Entity, Vec2)> = Vec::new();
+    let mut expired: Vec<hecs::Entity> = Vec::new();
+
+    for (entity, (pos, vel, gift)) in
+        world.query_mut::<(&Position, &mut Velocity, &mut GiftCarrier)>()
+    {
+        gift.timer -= dt;
+        if gift.timer <= 0.0 {
+            expired.push(entity);
+            continue;
+        }
+
+        let to_cursor = mouse_pos - pos.0;
+        let dist = to_cursor.length();
+
+        if dist < GIFT_DROP_DIST {
+            // Close enough — drop the gift!
+            delivered.push((entity, pos.0));
+        } else {
+            // Walk toward cursor
+            let dir = to_cursor / dist;
+            vel.0 = dir * GIFT_CARRY_SPEED;
+        }
+    }
+
+    // Remove gift component from delivered/expired cats
+    for (entity, _pos) in &delivered {
+        let _ = world.remove_one::<GiftCarrier>(*entity);
+        if let Ok(mut state) = world.get::<&mut CatState>(*entity) {
+            state.state = BehaviorState::Idle;
+            state.timer = 1.0 + rng.f32() * 2.0;
+        }
+        if let Ok(mut vel) = world.get::<&mut Velocity>(*entity) {
+            vel.0 = Vec2::ZERO;
+        }
+    }
+    for entity in expired {
+        let _ = world.remove_one::<GiftCarrier>(entity);
+    }
+
+    // Spawn new gift carriers (rare, from idle curious cats)
+    // Only if there aren't too many already
+    let carrier_count = world.query::<&GiftCarrier>().iter().count();
+    if carrier_count >= 3 {
+        return;
+    }
+
+    let mut new_carrier: Option<hecs::Entity> = None;
+    for (entity, (state, personality, _gift)) in
+        world.query::<(&CatState, &Personality, Option<&GiftCarrier>)>().iter()
+    {
+        if _gift.is_some() {
+            continue;
+        }
+        if !matches!(state.state, BehaviorState::Idle | BehaviorState::Walking) {
+            continue;
+        }
+        if personality.curiosity < 0.6 {
+            continue;
+        }
+        if rng.f32() < GIFT_SPAWN_CHANCE {
+            new_carrier = Some(entity);
+            break;
+        }
+    }
+
+    if let Some(entity) = new_carrier {
+        let _ = world.insert_one(entity, GiftCarrier { timer: 15.0 });
+        if let Ok(mut state) = world.get::<&mut CatState>(entity) {
+            state.state = BehaviorState::Walking;
+            state.timer = 15.0;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -216,9 +318,36 @@ fn steer_active(
 
     // Pass 2 (write): Update velocities or clean up
     for ai in bufs.active.iter() {
+        // Pouncing: still crouching, keep waiting for timer to expire
+        if ai.state == BehaviorState::Pouncing {
+            continue;
+        }
+
         // If the cat's behavior already changed (timer expired in behavior system),
         // just remove the InteractionTarget component.
         if !matches!(ai.state, BehaviorState::ChasingCat | BehaviorState::Playing) {
+            // Was this cat pouncing? (behavior.rs set it to Idle on timer expiry)
+            // If it has an InteractionTarget and just left Pouncing, do the leap.
+            if let Some(target_pos) = ai.target_pos {
+                let to_target = target_pos - ai.pos;
+                let dist = to_target.length();
+                if dist > 1.0 && dist < 200.0 {
+                    let dir = to_target / dist;
+                    if let Ok(mut vel) = world.get::<&mut Velocity>(ai.entity) {
+                        vel.0 = dir * POUNCE_LEAP_SPEED;
+                    }
+                    if let Ok(mut state) = world.get::<&mut CatState>(ai.entity) {
+                        state.state = BehaviorState::Running;
+                        state.timer = 0.3;
+                    }
+                    // Startle the target
+                    if let Ok((mut target_state, mut target_vel)) =
+                        world.query_one_mut::<(&mut CatState, &mut Velocity)>(ai.target)
+                    {
+                        crate::ecs::systems::behavior::trigger_startle(&mut target_state, &mut target_vel, rng);
+                    }
+                }
+            }
             let _ = world.remove_one::<InteractionTarget>(ai.entity);
             continue;
         }
@@ -479,6 +608,22 @@ fn phase_read(
                 }
             }
 
+            // Pounce: energetic cat pounces on idle/grooming cat
+            if matches!(me.state, BehaviorState::Idle | BehaviorState::Walking)
+                && matches!(them.state, BehaviorState::Idle | BehaviorState::Walking | BehaviorState::Grooming)
+                && me.personality.energy > 0.5
+                && me.personality.curiosity > 0.3
+            {
+                let chance = POUNCE_CHANCE * me.personality.energy;
+                if rng.f32() < chance {
+                    bufs.commands.push(InteractionCmd::StartPounce {
+                        pouncer: me.entity,
+                        target: them.entity,
+                    });
+                    return;
+                }
+            }
+
             // Nap cluster: one sleeping, other idle/grooming
             if me.state == BehaviorState::Sleeping
                 && matches!(them.state, BehaviorState::Idle | BehaviorState::Grooming)
@@ -732,6 +877,21 @@ fn phase_write(
                 if let Ok(mut vel) = world.get::<&mut Velocity>(entity) {
                     vel.0 = Vec2::ZERO;
                 }
+            }
+            InteractionCmd::StartPounce { pouncer, target } => {
+                if !can_start_interaction(world, pouncer) {
+                    continue;
+                }
+                // Wind-up: pouncer crouches for 0.4s (Pouncing state)
+                if let Ok(mut state) = world.get::<&mut CatState>(pouncer) {
+                    state.state = BehaviorState::Pouncing;
+                    state.timer = 0.4;
+                }
+                if let Ok(mut vel) = world.get::<&mut Velocity>(pouncer) {
+                    vel.0 = Vec2::ZERO; // crouch still
+                }
+                // Store target for the leap (uses InteractionTarget)
+                let _ = world.insert_one(pouncer, InteractionTarget(target));
             }
             InteractionCmd::SeedYawn { entity } => {
                 // Sleeping cat starts yawning (seed for cascade)

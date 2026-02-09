@@ -71,6 +71,10 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng, energy_
             BehaviorState::Parading => {
                 // Handled by interaction system (velocity maintained there)
             }
+            BehaviorState::Pouncing => {
+                // Wind-up phase: cat crouches, wiggles butt (velocity=0).
+                // When timer expires, the interaction system handles the leap.
+            }
         }
 
         if state.timer <= 0.0 {
@@ -102,6 +106,13 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng, energy_
                     // Parade ended, go back to walking
                     state.state = BehaviorState::Walking;
                     state.timer = 2.0 + rng.f32() * 3.0;
+                    continue;
+                }
+                BehaviorState::Pouncing => {
+                    // Pounce wind-up done — leap handled by interaction system.
+                    // If no target found, just go idle.
+                    state.state = BehaviorState::Idle;
+                    state.timer = 0.5 + rng.f32() * 1.0;
                     continue;
                 }
                 _ => {}
