@@ -1,11 +1,15 @@
+pub mod heatmap_pipeline;
 pub mod instance;
 pub mod pipeline;
+pub mod trail;
 
 use std::sync::Arc;
 use winit::window::Window;
 
+use self::heatmap_pipeline::HeatmapPipeline;
 use self::instance::CatInstance;
 use self::pipeline::CatPipeline;
+use self::trail::{TrailPipeline, TrailVertex};
 
 /// Core GPU state — device, queue, surface, pipeline.
 pub struct GpuState {
@@ -14,6 +18,15 @@ pub struct GpuState {
     pub surface: wgpu::Surface<'static>,
     pub surface_config: wgpu::SurfaceConfiguration,
     pub cat_pipeline: CatPipeline,
+    pub trail_pipeline: TrailPipeline,
+    pub heatmap_pipeline: HeatmapPipeline,
+}
+
+/// Intermediate frame state returned by `begin_frame`.
+pub struct FrameContext {
+    pub output: wgpu::SurfaceTexture,
+    pub view: wgpu::TextureView,
+    pub encoder: wgpu::CommandEncoder,
 }
 
 impl GpuState {
@@ -87,6 +100,18 @@ impl GpuState {
             wgpu::CompositeAlphaMode::Auto
         };
 
+        // Prefer Mailbox (no CPU-blocking on missed deadlines) with Fifo fallback.
+        let present_mode = if surface_caps
+            .present_modes
+            .contains(&wgpu::PresentMode::Mailbox)
+        {
+            log::info!("Using PresentMode::Mailbox");
+            wgpu::PresentMode::Mailbox
+        } else {
+            log::info!("Mailbox unavailable, falling back to PresentMode::Fifo");
+            wgpu::PresentMode::Fifo
+        };
+
         log::info!(
             "Surface: format={:?}, alpha_mode={:?}",
             format,
@@ -98,7 +123,7 @@ impl GpuState {
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -107,6 +132,16 @@ impl GpuState {
 
         // Create the cat rendering pipeline
         let cat_pipeline = CatPipeline::new(&device, format);
+
+        // Create the trail rendering pipeline (shares screen_size uniform)
+        let trail_pipeline = TrailPipeline::new(
+            &device,
+            format,
+            &cat_pipeline.screen_uniform_buffer,
+        );
+
+        // Create the heatmap rendering pipeline
+        let heatmap_pipeline = HeatmapPipeline::new(&device, format);
 
         // Set initial screen size uniform
         cat_pipeline.update_screen_size(
@@ -121,6 +156,8 @@ impl GpuState {
             surface,
             surface_config,
             cat_pipeline,
+            trail_pipeline,
+            heatmap_pipeline,
         }
     }
 
@@ -142,22 +179,41 @@ impl GpuState {
             .update_instances(&self.queue, instances);
     }
 
-    /// Render a frame — clear to transparent and draw all cat instances.
-    pub fn render_frame(&self) -> bool {
+    /// Upload trail vertex data for this frame.
+    pub fn update_trails(&mut self, vertices: &[TrailVertex]) {
+        self.trail_pipeline.update_vertices(&self.queue, vertices);
+    }
+
+    /// Upload heatmap texture data for this frame.
+    pub fn update_heatmap(&mut self, data: &[u8]) {
+        self.heatmap_pipeline.update_texture(&self.queue, data);
+    }
+
+    /// Change the present mode at runtime.
+    pub fn set_present_mode(&mut self, mode: wgpu::PresentMode) {
+        self.surface_config.present_mode = mode;
+        self.surface
+            .configure(&self.device, &self.surface_config);
+        log::info!("Present mode changed to {:?}", mode);
+    }
+
+    /// Acquire the next surface texture and create a command encoder.
+    /// Returns None if the surface is lost/outdated (caller should skip this frame).
+    pub fn begin_frame(&self) -> Option<FrameContext> {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface
                     .configure(&self.device, &self.surface_config);
-                return false;
+                return None;
             }
             Err(wgpu::SurfaceError::OutOfMemory) => {
                 log::error!("GPU out of memory");
-                return false;
+                return None;
             }
             Err(e) => {
                 log::warn!("Surface error: {e:?}");
-                return false;
+                return None;
             }
         };
 
@@ -165,48 +221,141 @@ impl GpuState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self
+        let encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame_encoder"),
             });
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("cat_render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+        Some(FrameContext {
+            output,
+            view,
+            encoder,
+        })
+    }
 
-            // Draw cat instances
-            let p = &self.cat_pipeline;
-            if p.num_instances > 0 {
-                render_pass.set_pipeline(&p.pipeline);
-                render_pass.set_bind_group(0, &p.screen_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, p.vertex_buffer.slice(..));
-                render_pass.set_vertex_buffer(1, p.instance_buffer.slice(..));
-                render_pass.set_index_buffer(p.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..6, 0, 0..p.num_instances);
-            }
+    /// Draw heatmap overlay (before trails and cats so it's behind everything).
+    pub fn draw_heatmap(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("heatmap_render_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        render_pass.set_pipeline(&self.heatmap_pipeline.pipeline);
+        render_pass.set_bind_group(0, &self.heatmap_pipeline.bind_group, &[]);
+        render_pass.draw(0..3, 0..1); // fullscreen triangle
+    }
+
+    /// Draw cat trails (between clear and cats, so trails are behind cats).
+    pub fn draw_trails(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let p = &self.trail_pipeline;
+        if p.num_vertices == 0 {
+            return;
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("trail_render_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        render_pass.set_pipeline(&p.pipeline);
+        render_pass.set_bind_group(0, &p.screen_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, p.vertex_buffer.slice(..));
+        render_pass.draw(0..p.num_vertices, 0..1);
+    }
+
+    /// Run the cat render pass (clear to transparent + draw instanced cats).
+    pub fn draw_cats(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("cat_render_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        let p = &self.cat_pipeline;
+        if p.num_instances > 0 {
+            render_pass.set_pipeline(&p.pipeline);
+            render_pass.set_bind_group(0, &p.screen_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, p.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, p.instance_buffer.slice(..));
+            render_pass.set_index_buffer(p.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..6, 0, 0..p.num_instances);
+        }
+    }
+
+    /// Create an egui render pass that preserves existing content (LoadOp::Load).
+    /// Returns a 'static render pass suitable for egui_wgpu::Renderer::render().
+    pub fn begin_egui_pass<'a>(
+        encoder: &'a mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) -> wgpu::RenderPass<'static> {
+        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("egui_render_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.forget_lifetime()
+    }
+
+    /// Submit the command encoder and present.
+    pub fn finish_frame(
+        &self,
+        encoder: wgpu::CommandEncoder,
+        output: wgpu::SurfaceTexture,
+        extra_cmd_bufs: Vec<wgpu::CommandBuffer>,
+    ) {
+        self.queue.submit(
+            extra_cmd_bufs
+                .into_iter()
+                .chain(std::iter::once(encoder.finish())),
+        );
         output.present();
-        true
     }
 }

@@ -14,9 +14,11 @@ use crate::ecs::components::{Appearance, CatState, Position, PrevPosition};
 use crate::ecs::systems;
 use crate::ecs::systems::interaction::InteractionBuffers;
 use crate::ecs::systems::mouse::CursorState;
+use crate::heatmap::Heatmap;
 use crate::mode::{AtkAction, ModeState};
 use crate::platform;
 use crate::render::instance::CatInstance;
+use crate::render::trail::TrailSystem;
 use crate::render::GpuState;
 use crate::spatial::{CatSnapshot, SpatialHash};
 
@@ -64,6 +66,10 @@ struct App {
     // Click interaction state (startle, treats, laser)
     click_state: ClickState,
 
+    // Visual systems
+    trail_system: TrailSystem,
+    heatmap: Heatmap,
+
     // RNG (shared, deterministic per session)
     rng: fastrand::Rng,
 
@@ -93,6 +99,8 @@ impl App {
             cursor_state: CursorState::new(),
             mode_state: ModeState::new(),
             click_state: ClickState::new(),
+            trail_system: TrailSystem::new(),
+            heatmap: Heatmap::new(1.0, 1.0),
             rng: fastrand::Rng::new(),
             last_frame_time: None,
             accumulator: 0.0,
@@ -268,6 +276,9 @@ impl ApplicationHandler for App {
         self.debug = Some(debug);
         log::info!("wgpu + cat pipeline + debug overlay initialized");
 
+        // Initialize heatmap with actual screen dimensions
+        self.heatmap.resize(self.screen_w as f32, self.screen_h as f32);
+
         // Spawn cats
         cat::spawn_cats(
             &mut self.world,
@@ -344,12 +355,14 @@ impl ApplicationHandler for App {
             }
         }
 
-        // Sync debug mode display
+        // Sync debug mode display + visual toggles
         if let Some(debug) = &mut self.debug {
             debug.current_mode = self.mode_state.mode;
             debug.idle_seconds = self.mode_state.idle_seconds;
             debug.edge_affinity = self.mode_state.edge_affinity;
             debug.energy_scale = self.mode_state.behavior_energy_scale;
+            self.trail_system.enabled = debug.show_trails;
+            self.heatmap.enabled = debug.show_heatmap;
         }
 
         if let Some(w) = &self.window {
@@ -383,6 +396,7 @@ impl ApplicationHandler for App {
                     gpu.resize(new_size.width, new_size.height);
                     self.screen_w = new_size.width;
                     self.screen_h = new_size.height;
+                    self.heatmap.resize(new_size.width as f32, new_size.height as f32);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -451,12 +465,51 @@ impl ApplicationHandler for App {
                     self.instance_buf.clear();
                 }
 
+                // --- Update trail and heatmap ---
+                {
+                    // Build trail positions from ECS
+                    if self.trail_system.enabled {
+                        let mut trail_positions = Vec::with_capacity(self.world.len() as usize);
+                        for (_, (pos, appearance)) in
+                            self.world.query::<(&Position, &Appearance)>().iter()
+                        {
+                            let color = appearance.color;
+                            let r = ((color >> 24) & 0xFF) as f32 / 255.0;
+                            let g = ((color >> 16) & 0xFF) as f32 / 255.0;
+                            let b = ((color >> 8) & 0xFF) as f32 / 255.0;
+                            trail_positions.push((pos.0.x, pos.0.y, r, g, b));
+                        }
+                        self.trail_system.update(&trail_positions);
+                    }
+
+                    // Update heatmap with cursor position
+                    if self.heatmap.enabled {
+                        #[cfg(windows)]
+                        let (mx, my) = platform::win32::get_mouse_pos();
+                        #[cfg(not(windows))]
+                        let (mx, my) = (0.0f32, 0.0f32);
+                        self.heatmap.update(mx, my, TICK_RATE as f32);
+                    }
+                }
+
                 // --- GPU upload (timed) ---
                 if let Some(timers) = &mut timers_temp {
                     timers.begin();
                 }
                 if let Some(gpu) = &mut self.gpu {
                     gpu.update_instances(&self.instance_buf);
+
+                    // Upload trail vertices
+                    if self.trail_system.enabled {
+                        let trail_verts = self.trail_system.build_vertices();
+                        gpu.update_trails(trail_verts);
+                    }
+
+                    // Upload heatmap texture
+                    if self.heatmap.enabled {
+                        let heatmap_data = self.heatmap.to_texture_data();
+                        gpu.update_heatmap(&heatmap_data);
+                    }
                 }
                 if let Some(timers) = &mut timers_temp {
                     timers.end(SystemPhase::GpuUpload);
@@ -491,8 +544,18 @@ impl ApplicationHandler for App {
                         debug.system_timers.begin();
                     }
 
-                    // Cat render pass
+                    // Cat render pass (includes clear to transparent)
                     gpu.draw_cats(&mut frame.encoder, &frame.view);
+
+                    // Heatmap overlay (behind trails/cats but after clear)
+                    if self.heatmap.enabled {
+                        gpu.draw_heatmap(&mut frame.encoder, &frame.view);
+                    }
+
+                    // Trail render pass (behind cats, after heatmap)
+                    if self.trail_system.enabled {
+                        gpu.draw_trails(&mut frame.encoder, &frame.view);
+                    }
 
                     // Egui render pass (if visible)
                     let mut extra_cmd_bufs = Vec::new();

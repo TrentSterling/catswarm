@@ -50,6 +50,10 @@ pub struct DebugOverlay {
     pub mode_changed: bool,
     pub selected_mode_index: usize,
 
+    /// Visual toggle controls.
+    pub show_trails: bool,
+    pub show_heatmap: bool,
+
     // Stats accumulator (replaces FrameStats).
     frame_count: u64,
     log_timer: f64,
@@ -115,6 +119,8 @@ impl DebugOverlay {
             energy_scale: 1.0,
             mode_changed: false,
             selected_mode_index: 1, // Play
+            show_trails: false,
+            show_heatmap: false,
             frame_count: 0,
             log_timer: 0.0,
             log_frame_count: 0,
@@ -238,10 +244,16 @@ impl DebugOverlay {
         let mut target_cat_count = self.target_cat_count;
         let mut present_mode_index = self.present_mode_index;
         let mut selected_mode_index = self.selected_mode_index;
+        let mut show_trails = self.show_trails;
+        let mut show_heatmap = self.show_heatmap;
 
         let ctx = self.egui_ctx.clone();
         let full_output = ctx.run(raw_input, |ctx| {
-            draw_ui(ctx, &ui_state, &mut paused, &mut target_cat_count, &mut present_mode_index, &mut selected_mode_index);
+            draw_ui(
+                ctx, &ui_state,
+                &mut paused, &mut target_cat_count, &mut present_mode_index,
+                &mut selected_mode_index, &mut show_trails, &mut show_heatmap,
+            );
         });
 
         // Write back mutable controls.
@@ -255,6 +267,8 @@ impl DebugOverlay {
             self.mode_changed = true;
         }
         self.selected_mode_index = selected_mode_index;
+        self.show_trails = show_trails;
+        self.show_heatmap = show_heatmap;
 
         self.egui_state
             .handle_platform_output(window, full_output.platform_output);
@@ -336,6 +350,8 @@ fn draw_ui(
     target_cat_count: &mut usize,
     present_mode_index: &mut usize,
     selected_mode_index: &mut usize,
+    show_trails: &mut bool,
+    show_heatmap: &mut bool,
 ) {
     if !s.visible {
         return;
@@ -470,6 +486,12 @@ fn draw_ui(
                         }
                     });
             });
+            ui.add_space(4.0);
+
+            // --- Visuals ---
+            ui.heading("Visuals");
+            ui.checkbox(show_trails, "Show Trails");
+            ui.checkbox(show_heatmap, "Show Heatmap");
             ui.add_space(4.0);
 
             // --- Mode ---
