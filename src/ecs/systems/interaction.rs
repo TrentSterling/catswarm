@@ -40,6 +40,8 @@ const PLAY_CHANCE: f32 = 0.008;
 const CHASE_CHANCE: f32 = 0.005;
 /// Per-tick probability a cat pounces on another.
 const POUNCE_CHANCE: f32 = 0.002;
+/// Per-tick probability two nearby cats start fighting.
+const FIGHT_CHANCE: f32 = 0.001;
 /// Pounce leap speed.
 const POUNCE_LEAP_SPEED: f32 = 350.0;
 /// Per-tick probability an idle cat joins a sleeping neighbor.
@@ -118,6 +120,10 @@ enum InteractionCmd {
     StartPounce {
         pouncer: hecs::Entity,
         target: hecs::Entity,
+    },
+    StartFight {
+        cat_a: hecs::Entity,
+        cat_b: hecs::Entity,
     },
 }
 
@@ -320,6 +326,12 @@ fn steer_active(
     for ai in bufs.active.iter() {
         // Pouncing: still crouching, keep waiting for timer to expire
         if ai.state == BehaviorState::Pouncing {
+            continue;
+        }
+
+        // Fighting: cats jitter near each other. When loser's timer expires
+        // (behavior.rs transitions them to Walking), startle them instead.
+        if ai.state == BehaviorState::Fighting {
             continue;
         }
 
@@ -624,6 +636,24 @@ fn phase_read(
                 }
             }
 
+            // Fight: two energetic, low-skittish cats get territorial
+            if matches!(me.state, BehaviorState::Idle | BehaviorState::Walking)
+                && matches!(them.state, BehaviorState::Idle | BehaviorState::Walking)
+                && me.personality.energy > 0.5
+                && them.personality.energy > 0.5
+                && me.personality.skittishness < 0.4
+                && them.personality.skittishness < 0.4
+            {
+                let chance = FIGHT_CHANCE * me.personality.energy * them.personality.energy;
+                if rng.f32() < chance {
+                    bufs.commands.push(InteractionCmd::StartFight {
+                        cat_a: me.entity,
+                        cat_b: them.entity,
+                    });
+                    return;
+                }
+            }
+
             // Nap cluster: one sleeping, other idle/grooming
             if me.state == BehaviorState::Sleeping
                 && matches!(them.state, BehaviorState::Idle | BehaviorState::Grooming)
@@ -892,6 +922,29 @@ fn phase_write(
                 }
                 // Store target for the leap (uses InteractionTarget)
                 let _ = world.insert_one(pouncer, InteractionTarget(target));
+            }
+            InteractionCmd::StartFight { cat_a, cat_b } => {
+                if !can_start_interaction(world, cat_a)
+                    || !can_start_interaction(world, cat_b)
+                {
+                    continue;
+                }
+                // Both cats enter Fighting state, facing each other
+                let fight_duration = 1.0 + rng.f32() * 1.5;
+                // Cat A fights slightly longer (winner)
+                if let Ok(mut state) = world.get::<&mut CatState>(cat_a) {
+                    state.state = BehaviorState::Fighting;
+                    state.timer = fight_duration;
+                }
+                // Cat B is the loser — shorter timer, gets startled when done
+                let loser_duration = fight_duration * 0.6;
+                if let Ok(mut state) = world.get::<&mut CatState>(cat_b) {
+                    state.state = BehaviorState::Fighting;
+                    state.timer = loser_duration;
+                }
+                // Store targets so they face each other
+                let _ = world.insert_one(cat_a, InteractionTarget(cat_b));
+                let _ = world.insert_one(cat_b, InteractionTarget(cat_a));
             }
             InteractionCmd::SeedYawn { entity } => {
                 // Sleeping cat starts yawning (seed for cascade)

@@ -48,6 +48,85 @@ impl Boxes {
 }
 
 // ---------------------------------------------------------------------------
+// Water Glass
+// ---------------------------------------------------------------------------
+
+/// A water glass that cats knock off the screen edge.
+#[derive(Debug, Clone, Copy)]
+pub struct WaterGlass {
+    pub pos: Vec2,
+    pub vel: Vec2,
+    pub lifetime: f32,
+    /// True when the glass has been shattered (reached edge).
+    pub shattered: bool,
+}
+
+pub struct Glasses {
+    pub glasses: Vec<WaterGlass>,
+}
+
+const MAX_GLASSES: usize = 5;
+const GLASS_LIFETIME: f32 = 45.0;
+const GLASS_FRICTION: f32 = 0.97;
+
+impl Glasses {
+    pub fn new() -> Self {
+        Self {
+            glasses: Vec::with_capacity(MAX_GLASSES),
+        }
+    }
+
+    pub fn spawn(&mut self, pos: Vec2) {
+        if self.glasses.len() >= MAX_GLASSES {
+            self.glasses.remove(0);
+        }
+        self.glasses.push(WaterGlass {
+            pos,
+            vel: Vec2::ZERO,
+            lifetime: GLASS_LIFETIME,
+            shattered: false,
+        });
+    }
+
+    /// Update glass physics. Returns positions of shattered glasses for particle effects.
+    pub fn update(&mut self, dt: f32, screen_w: f32, screen_h: f32) -> Vec<Vec2> {
+        let mut shattered_positions = Vec::new();
+        let margin = 15.0;
+
+        for glass in &mut self.glasses {
+            if glass.shattered {
+                continue;
+            }
+
+            glass.pos += glass.vel * dt;
+            glass.vel *= GLASS_FRICTION;
+            glass.lifetime -= dt;
+
+            // Shatter when reaching screen edge
+            if glass.pos.x < margin || glass.pos.x > screen_w - margin
+                || glass.pos.y < margin || glass.pos.y > screen_h - margin
+            {
+                glass.shattered = true;
+                shattered_positions.push(glass.pos);
+            }
+        }
+
+        // Remove expired or shattered glasses (keep shattered briefly for visual)
+        self.glasses.retain(|g| g.lifetime > 0.0);
+        shattered_positions
+    }
+
+    /// Apply a push from a cat nudging the glass.
+    pub fn push(&mut self, index: usize, impulse: glam::Vec2) {
+        if let Some(glass) = self.glasses.get_mut(index) {
+            if !glass.shattered {
+                glass.vel += impulse;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Yarn Ball
 // ---------------------------------------------------------------------------
 

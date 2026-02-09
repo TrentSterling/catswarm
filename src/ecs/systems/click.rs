@@ -3,7 +3,7 @@ use glam::Vec2;
 use crate::click::ClickState;
 use crate::ecs::components::{BehaviorState, CatState, Personality, Position, Velocity};
 use crate::ecs::systems::behavior;
-use crate::toy::{Boxes, YarnBalls};
+use crate::toy::{Boxes, Glasses, YarnBalls};
 
 /// Startle radius: cats within this of a click get startled.
 const STARTLE_RADIUS: f32 = 100.0;
@@ -34,6 +34,11 @@ const BOX_ATTRACT_RADIUS: f32 = 200.0;
 /// Box approach speed (curiosity-scaled).
 const BOX_APPROACH_SPEED: f32 = 40.0;
 
+/// Glass nudge radius: cats close to a glass will push it.
+const GLASS_NUDGE_RADIUS: f32 = 30.0;
+/// Glass push strength when a cat walks into it.
+const GLASS_PUSH_STRENGTH: f32 = 80.0;
+
 /// Process click interactions: startle, treats, laser pointer, yarn balls, boxes.
 pub fn update(
     world: &mut hecs::World,
@@ -42,6 +47,7 @@ pub fn update(
     rng: &mut fastrand::Rng,
     yarn_balls: &mut YarnBalls,
     boxes: &mut Boxes,
+    glasses: &mut Glasses,
 ) {
     // --- Left click: startle nearest cat + flee impulse ---
     if click.left_clicked {
@@ -278,6 +284,45 @@ pub fn update(
                     state.timer = 0.5;
                 }
             }
+        }
+    }
+
+    // --- Water glasses: cats nudge them toward screen edges ---
+    if !glasses.glasses.is_empty() {
+        let nudge_sq = GLASS_NUDGE_RADIUS * GLASS_NUDGE_RADIUS;
+        let mut pushes: Vec<(usize, Vec2)> = Vec::new();
+
+        for (_, (pos, state, personality)) in world
+            .query_mut::<(&Position, &CatState, &Personality)>()
+        {
+            // Only walking/running/zoomies cats push glasses
+            if !matches!(
+                state.state,
+                BehaviorState::Walking
+                    | BehaviorState::Running
+                    | BehaviorState::Zoomies
+                    | BehaviorState::ChasingMouse
+            ) {
+                continue;
+            }
+
+            for (i, glass) in glasses.glasses.iter().enumerate() {
+                if glass.shattered {
+                    continue;
+                }
+                let delta = glass.pos - pos.0;
+                let dist_sq = delta.length_squared();
+                if dist_sq < nudge_sq && dist_sq > 1.0 {
+                    let dist = dist_sq.sqrt();
+                    let push_dir = delta / dist;
+                    let strength = GLASS_PUSH_STRENGTH * (0.5 + personality.energy * 0.5);
+                    pushes.push((i, push_dir * strength));
+                }
+            }
+        }
+
+        for (idx, impulse) in pushes {
+            glasses.push(idx, impulse);
         }
     }
 }

@@ -147,6 +147,36 @@ impl ParticleSystem {
                         None
                     }
                 }
+                BehaviorState::Fighting => {
+                    // Angry sparks — red/orange bursts shooting outward
+                    if rng.f32() < 10.0 * dt {
+                        let angle = rng.f32() * std::f32::consts::TAU;
+                        let colors = [0xFF2222EE, 0xFF5511DD, 0xFFAA00CC];
+                        Some(ParticleSpawn {
+                            color: colors[rng.usize(0..colors.len())],
+                            frame: 5, // star (spiky = angry)
+                            size: 0.15 + rng.f32() * 0.12,
+                            vel: Vec2::new(angle.cos() * 100.0, angle.sin() * 100.0),
+                            lifetime: 0.25 + rng.f32() * 0.2,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                BehaviorState::Pouncing => {
+                    // Tension dots while winding up
+                    if rng.f32() < 3.0 * dt {
+                        Some(ParticleSpawn {
+                            color: 0xFF8833BB, // orange
+                            frame: 3,          // circle
+                            size: 0.08 + rng.f32() * 0.05,
+                            vel: Vec2::new(rng.f32() * 20.0 - 10.0, -15.0),
+                            lifetime: 0.4 + rng.f32() * 0.2,
+                        })
+                    } else {
+                        None
+                    }
+                }
                 // No particles for Idle, Walking, Running, FleeingCursor, Parading
                 _ => None,
             };
