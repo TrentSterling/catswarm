@@ -3,6 +3,7 @@ mod cat;
 mod click;
 mod debug;
 mod ecs;
+mod heatmap;
 mod mode;
 mod platform;
 mod render;
