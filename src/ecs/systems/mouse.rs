@@ -10,13 +10,13 @@ const CHASE_SPEED: f32 = 100.0;
 const CHASE_CHANCE_PER_TICK: f32 = 0.02;
 
 /// Moses Effect: radius of cursor repulsion when cursor moves fast.
-const MOSES_RADIUS: f32 = 300.0;
+const MOSES_RADIUS: f32 = 400.0;
 /// Cursor speed threshold (px/s) to trigger Moses Effect.
-const MOSES_SPEED_THRESHOLD: f32 = 150.0;
+const MOSES_SPEED_THRESHOLD: f32 = 100.0;
 /// Moses repulsion strength multiplier.
-const MOSES_STRENGTH: f32 = 2.5;
+const MOSES_STRENGTH: f32 = 3.5;
 /// Max Moses repulsion velocity applied per tick.
-const MOSES_MAX_PUSH: f32 = 200.0;
+const MOSES_MAX_PUSH: f32 = 300.0;
 
 /// Flee speed range for skittish cats.
 const FLEE_SPEED_MIN: f32 = 80.0;

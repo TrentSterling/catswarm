@@ -164,15 +164,18 @@ pub fn get_local_hour() -> f32 {
 }
 
 /// Get mouse button states. Returns (left_down, right_down, middle_down).
-/// Middle button checks both held state and transition bit for quick clicks.
+/// All buttons check both held state (high bit) and transition bit (low bit)
+/// to catch quick clicks that release between polls (e.g. right-click opening
+/// a context menu on the desktop behind our click-through overlay).
 pub fn get_mouse_buttons() -> (bool, bool, bool) {
     unsafe {
-        let left = GetAsyncKeyState(0x01) & (0x8000u16 as i16) != 0; // VK_LBUTTON
-        let right = GetAsyncKeyState(0x02) & (0x8000u16 as i16) != 0; // VK_RBUTTON
-        // Middle button: check both held (high bit) and transition (low bit)
-        // to catch quick scroll-wheel clicks that may release between polls
-        let mid_state = GetAsyncKeyState(0x04); // VK_MBUTTON
-        let middle = (mid_state & (0x8000u16 as i16) != 0) || (mid_state & 1 != 0);
+        let l = GetAsyncKeyState(0x01); // VK_LBUTTON
+        let r = GetAsyncKeyState(0x02); // VK_RBUTTON
+        let m = GetAsyncKeyState(0x04); // VK_MBUTTON
+        let held = 0x8000u16 as i16;
+        let left = (l & held != 0) || (l & 1 != 0);
+        let right = (r & held != 0) || (r & 1 != 0);
+        let middle = (m & held != 0) || (m & 1 != 0);
         (left, right, middle)
     }
 }

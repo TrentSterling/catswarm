@@ -215,6 +215,60 @@ impl ParticleSystem {
         }
     }
 
+    /// Spawn a dust poof at a landing position. Particles scatter horizontally.
+    pub fn spawn_dust(
+        &mut self,
+        pos: Vec2,
+        count: usize,
+        intensity: f32,
+        rng: &mut fastrand::Rng,
+    ) {
+        for _ in 0..count {
+            if self.particles.len() >= MAX_PARTICLES {
+                break;
+            }
+            // Dust spreads horizontally with slight upward drift
+            let angle = rng.f32() * std::f32::consts::PI; // only upper semicircle
+            let speed = (20.0 + rng.f32() * 50.0) * intensity;
+            self.particles.push(Particle {
+                pos: pos + Vec2::new(rng.f32() * 8.0 - 4.0, 0.0),
+                vel: Vec2::new(angle.cos() * speed * 2.0, -angle.sin() * speed),
+                lifetime: 0.3 + rng.f32() * 0.4 * intensity,
+                max_lifetime: 0.7,
+                color: 0xCCBB99BB, // dusty tan, semi-transparent
+                size: 0.08 + rng.f32() * 0.12 * intensity,
+                frame: 3, // circle
+            });
+        }
+    }
+
+    /// Spawn a burst of particles at a position (for click feedback etc).
+    pub fn spawn_burst(
+        &mut self,
+        pos: Vec2,
+        count: usize,
+        color: u32,
+        frame: u32,
+        rng: &mut fastrand::Rng,
+    ) {
+        for _ in 0..count {
+            if self.particles.len() >= MAX_PARTICLES {
+                break;
+            }
+            let angle = rng.f32() * std::f32::consts::TAU;
+            let speed = 40.0 + rng.f32() * 80.0;
+            self.particles.push(Particle {
+                pos: pos + Vec2::new(rng.f32() * 6.0 - 3.0, rng.f32() * 6.0 - 3.0),
+                vel: Vec2::new(angle.cos() * speed, angle.sin() * speed),
+                lifetime: 0.4 + rng.f32() * 0.3,
+                max_lifetime: 0.7,
+                color,
+                size: 0.1 + rng.f32() * 0.1,
+                frame,
+            });
+        }
+    }
+
     /// Number of active particles.
     pub fn count(&self) -> usize {
         self.particles.len()

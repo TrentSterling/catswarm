@@ -3,7 +3,7 @@ use glam::Vec2;
 use crate::click::ClickState;
 use crate::ecs::components::{BehaviorState, CatState, Personality, Position, Velocity};
 use crate::ecs::systems::behavior;
-use crate::toy::YarnBall;
+use crate::toy::YarnBalls;
 
 /// Startle radius: cats within this of a click get startled.
 const STARTLE_RADIUS: f32 = 100.0;
@@ -27,15 +27,15 @@ const YARN_ATTRACT_RADIUS: f32 = 250.0;
 /// Yarn ball chase speed.
 const YARN_CHASE_SPEED: f32 = 100.0;
 /// Yarn ball bat impulse when a cat reaches it.
-const YARN_BAT_IMPULSE: f32 = 80.0;
+const YARN_BAT_IMPULSE: f32 = 250.0;
 
-/// Process click interactions: startle, treats, laser pointer, yarn ball.
+/// Process click interactions: startle, treats, laser pointer, yarn balls.
 pub fn update(
     world: &mut hecs::World,
     click: &ClickState,
     mouse_pos: Vec2,
     rng: &mut fastrand::Rng,
-    yarn: &mut YarnBall,
+    yarn_balls: &mut YarnBalls,
 ) {
     // --- Left click: startle nearest cat + flee impulse ---
     if click.left_clicked {
@@ -85,12 +85,11 @@ pub fn update(
         }
     }
 
-    // --- Right click treats: attract nearby idle/walking cats ---
+    // --- Treats: attract nearby idle/walking cats ---
     if !click.treats.is_empty() {
         for (_, (pos, vel, state, personality)) in world
             .query_mut::<(&Position, &mut Velocity, &mut CatState, &Personality)>()
         {
-            // Only attract idle/walking cats
             if !matches!(
                 state.state,
                 BehaviorState::Idle | BehaviorState::Walking
@@ -98,7 +97,6 @@ pub fn update(
                 continue;
             }
 
-            // Find nearest treat
             let mut best_treat: Option<Vec2> = None;
             let mut best_dist_sq = TREAT_ATTRACT_RADIUS * TREAT_ATTRACT_RADIUS;
             for treat in &click.treats {
@@ -117,7 +115,7 @@ pub fn update(
                     let speed = TREAT_APPROACH_SPEED * (0.5 + personality.curiosity * 1.0);
                     vel.0 = dir * speed;
                     state.state = BehaviorState::Walking;
-                    state.timer = 0.5; // refresh timer so it keeps approaching
+                    state.timer = 0.5;
                 }
             }
         }
@@ -128,12 +126,9 @@ pub fn update(
         for (_, (pos, vel, state, personality)) in world
             .query_mut::<(&Position, &mut Velocity, &mut CatState, &Personality)>()
         {
-            // Only high-curiosity cats react to laser
             if personality.curiosity < 0.4 {
                 continue;
             }
-
-            // Only cats in interruptible states
             if !matches!(
                 state.state,
                 BehaviorState::Idle
@@ -155,32 +150,25 @@ pub fn update(
                 let speed = LASER_CHASE_SPEED * (0.8 + personality.curiosity * 0.4);
                 vel.0 = dir * speed + jitter;
                 state.state = BehaviorState::ChasingMouse;
-                state.timer = 0.5; // refresh frequently for jittery tracking
+                state.timer = 0.5;
             }
         }
     }
 
-    // --- Middle click: spawn/throw yarn ball ---
-    if click.middle_clicked {
-        if yarn.active {
-            // Throw it from current position toward mouse
-            let dir = (mouse_pos - yarn.pos).normalize_or_zero();
-            yarn.throw(dir * 300.0);
-        } else {
-            yarn.spawn(mouse_pos);
-        }
+    // --- Right click: always spawn a new yarn ball ---
+    if click.right_clicked {
+        yarn_balls.spawn(mouse_pos);
     }
 
-    // --- Yarn ball: attract nearby cats, let them bat it ---
-    if yarn.active {
-        let yarn_pos = yarn.pos;
+    // --- Yarn balls: attract nearby cats, let them bat ---
+    if yarn_balls.any_active() {
         let attract_sq = YARN_ATTRACT_RADIUS * YARN_ATTRACT_RADIUS;
-        let mut bat_impulse = Vec2::ZERO;
+        // Collect bat impulses per ball
+        let mut bat_impulses: Vec<(usize, Vec2)> = Vec::new();
 
         for (_, (pos, vel, state, personality)) in world
             .query_mut::<(&Position, &mut Velocity, &mut CatState, &Personality)>()
         {
-            // Only idle/walking/running cats with some energy chase the ball
             if !matches!(
                 state.state,
                 BehaviorState::Idle | BehaviorState::Walking | BehaviorState::Running
@@ -191,34 +179,45 @@ pub fn update(
                 continue;
             }
 
-            let to_yarn = yarn_pos - pos.0;
-            let dist_sq = to_yarn.length_squared();
-            if dist_sq > attract_sq || dist_sq < 1.0 {
-                continue;
+            // Find nearest yarn ball
+            let mut best_idx: Option<usize> = None;
+            let mut best_dist_sq = attract_sq;
+            for (i, ball) in yarn_balls.balls.iter().enumerate() {
+                let dist_sq = (ball.pos - pos.0).length_squared();
+                if dist_sq < best_dist_sq {
+                    best_dist_sq = dist_sq;
+                    best_idx = Some(i);
+                }
             }
 
-            let dist = dist_sq.sqrt();
+            if let Some(idx) = best_idx {
+                let yarn_pos = yarn_balls.balls[idx].pos;
+                let to_yarn = yarn_pos - pos.0;
+                let dist = best_dist_sq.sqrt();
 
-            // Cat is close enough to bat the ball
-            if dist < 20.0 {
-                let bat_dir = Vec2::new(rng.f32() - 0.5, rng.f32() - 0.5).normalize_or_zero();
-                bat_impulse += bat_dir * YARN_BAT_IMPULSE * personality.energy;
-                // Cat gets excited
-                state.state = BehaviorState::Running;
-                state.timer = 0.3 + rng.f32() * 0.5;
-            } else {
-                // Chase toward yarn ball
-                let dir = to_yarn / dist;
-                let speed = YARN_CHASE_SPEED * (0.5 + personality.energy * 0.5);
-                vel.0 = dir * speed;
-                state.state = BehaviorState::Running;
-                state.timer = 0.5;
+                if dist < 20.0 {
+                    // Bat the ball
+                    let bat_dir = Vec2::new(rng.f32() - 0.5, rng.f32() - 0.5).normalize_or_zero();
+                    bat_impulses.push((idx, bat_dir * YARN_BAT_IMPULSE * (0.5 + personality.energy * 0.5)));
+                    // Cat runs away after batting
+                    let away = -bat_dir;
+                    vel.0 = away * 120.0 * personality.energy;
+                    state.state = BehaviorState::Running;
+                    state.timer = 0.8 + rng.f32() * 0.7;
+                } else {
+                    // Chase toward nearest yarn ball
+                    let dir = to_yarn / dist;
+                    let speed = YARN_CHASE_SPEED * (0.5 + personality.energy * 0.5);
+                    vel.0 = dir * speed;
+                    state.state = BehaviorState::Running;
+                    state.timer = 0.5;
+                }
             }
         }
 
-        // Apply accumulated bat impulses to the yarn ball
-        if bat_impulse.length_squared() > 1.0 {
-            yarn.bat(bat_impulse);
+        // Apply bat impulses
+        for (idx, impulse) in bat_impulses {
+            yarn_balls.bat(idx, impulse);
         }
     }
 }
