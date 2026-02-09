@@ -21,12 +21,17 @@ Transparent desktop toy for Windows. Spawns 1000+ procedural cats that roam the 
 - **No allocations in hot path.** Pre-allocate everything. Reuse buffers. Arena where needed.
 
 ## Current State
-Milestones 0–3 are implemented and working:
+Milestones 0–4 + Desktop Companion Overhaul (v0.2.0):
 - Transparent DX12 overlay with DirectComposition (`DxgiFromVisual`) + PreMultiplied alpha
 - 1000 cats rendering via single instanced draw call with procedural SDF silhouettes (3 poses)
 - ECS simulation: movement, friction, behavior state machines, mouse chasing
-- Spatial hash grid rebuilt each tick (ready for Milestone 4 neighbor queries)
-- ~47 FPS on RTX 5070 Ti at 4096x2160 (vsync)
+- Spatial hash grid rebuilt each tick for neighbor queries
+- **Cursor Intelligence**: Moses Effect (fast cursor scatters cats), personality-driven flee/chase/ignore
+- **Emergent Behaviors**: Zoomies (contagious), Startled (jump + scatter), Yawning (contagious sleep cascades)
+- **Mode System**: Work/Play/Zen/Chaos modes (F11), AFK auto-escalation via GetLastInputInfo
+- **Click Interactions**: Left-click startle, right-click treats, double-click laser pointer
+- **Visual Flourishes**: Cat trails (per-cat ring buffer + line shader), cursor heatmap (64x64 grid + fullscreen shader)
+- **Debug Overlay**: egui 0.33, F12 toggle, FPS/frame histogram, per-system timers, mode/visual controls
 
 ## Build & Run
 ```bash
@@ -35,7 +40,9 @@ cargo run --release            # release build (full LTO, stripped)
 cargo test                     # run tests
 RUST_LOG=info cargo run        # with debug logging
 ```
-ESC to quit (polled via GetAsyncKeyState since window is click-through).
+- ESC to quit, F11 to cycle modes, F12 to toggle debug overlay
+- Left-click: startle nearest cat. Right-click: drop treat. Double-click: laser pointer (5s)
+- All keys polled via GetAsyncKeyState (window is click-through)
 
 ## Code Conventions
 - `snake_case` for everything except types/traits (`PascalCase`)
@@ -50,32 +57,44 @@ ESC to quit (polled via GetAsyncKeyState since window is click-through).
 src/
   main.rs          — entry point, event loop
   app.rs           — App state, init, frame orchestration
+  mode.rs          — AppMode (Work/Play/Zen/Chaos) + AFK escalation
+  click.rs         — ClickState: mouse button edge-detection, treats, laser
+  heatmap.rs       — Cursor heatmap: 64x64 grid with decay + sampling
   ecs/
     mod.rs         — re-exports
-    components.rs  — all ECS components
+    components.rs  — all ECS components (11 behavior states)
     systems/
       mod.rs       — system scheduling (tick order)
       movement.rs  — position/velocity integration, friction, bounds
-      behavior.rs  — state machine transitions
-      spatial.rs   — spatial hash update
-      mouse.rs     — mouse tracking & chase logic
-      interaction.rs — cat-to-cat interactions (stub, Milestone 4)
+      behavior.rs  — state machine transitions (zoomies, startled, yawning)
+      spatial.rs   — spatial hash + snapshot rebuild
+      mouse.rs     — CursorState tracking, Moses Effect, personality reactions
+      click.rs     — click system: startle, treats, laser pointer
+      interaction.rs — cat-to-cat interactions + contagion mechanics
       window_aware.rs — Win32 window detection (stub, Milestone 6)
   render/
-    mod.rs         — GpuState: device, surface, resize, render_frame
+    mod.rs         — GpuState: device, surface, resize, render passes
     pipeline.rs    — CatPipeline: render pipeline, buffers, draw
     instance.rs    — CatInstance: per-instance GPU data
+    trail.rs       — TrailSystem + TrailPipeline: per-cat trails
+    heatmap_pipeline.rs — HeatmapPipeline: fullscreen heatmap overlay
     shaders/
       cat.wgsl     — procedural SDF cat shader (3 poses)
+      trail.wgsl   — trail line shader with alpha fade
+      heatmap.wgsl — fullscreen heatmap with warm color ramp
   spatial/
-    mod.rs         — spatial hash grid implementation
+    mod.rs         — spatial hash grid + CatSnapshot
   cat/
     mod.rs         — cat spawning, procedural color generation
     personality.rs — personality trait weights (stub, Milestone 5)
     animation.rs   — animation state struct (stub, Milestone 7)
+  debug/
+    mod.rs         — DebugOverlay: egui-powered debug panel
+    ring.rs        — RingBuffer for frame time history
+    timer.rs       — SystemTimers: per-system EMA timing
   platform/
     mod.rs         — platform abstraction
-    win32.rs       — Win32 overlay setup, mouse pos, ESC key, window enum
+    win32.rs       — Win32 overlay, mouse, keys, idle time, window enum
   util/
     mod.rs         — misc utilities
     pool.rs        — object pool / arena
@@ -101,8 +120,13 @@ src/
 
 ### Simulation
 - Fixed 60Hz timestep with interpolated rendering (accumulator + alpha lerp)
-- Behavior state machine per cat: Idle, Walking, Running, Sleeping, Grooming, ChasingMouse
-- Personality (laziness, energy, curiosity, skittishness) affects transition weights
+- Behavior state machine per cat: Idle, Walking, Running, Sleeping, Grooming, ChasingMouse, FleeingCursor, ChasingCat, Playing, Zoomies, Startled, Yawning
+- Personality (laziness, energy, curiosity, skittishness) drives chase/flee/ignore reactions
+- Cursor intelligence: Moses Effect (fast cursor repulsion), still-cursor attraction, personality reactions
+- Contagion: zoomies spread to nearby idle cats (5%), yawns spread to nearby idle cats (30%)
+- Mode system: Work/Play/Zen/Chaos presets affect energy scale, edge affinity, chase behavior
+- AFK escalation: 30s-5min progressive activation, auto-Zen with bonus cat spawning at 5min+
+- Click interactions: left-click startle + flee impulse, right-click treats, double-click laser pointer
 - Spatial hash: 128px cells, 1024 table size, rebuilt each tick
 - `fastrand::Rng` for behavior randomness (no allocation)
 
