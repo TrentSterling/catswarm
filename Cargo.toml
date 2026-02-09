@@ -1,6 +1,6 @@
 [package]
 name = "pettoy"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Transparent desktop toy - 1000+ procedural cats roaming your screen"
 authors = ["trent"]
