@@ -1,8 +1,12 @@
 # catswarm
 
+![catswarm](docs/og-image.png)
+
 1000 procedural cats swarming your desktop. Transparent GPU-accelerated overlay for Windows.
 
 Built in Rust with wgpu. Zero allocations in the hot path. Single draw call for all cats.
+
+**[Landing Page](https://tront.xyz/catswarm/)** | **[Blog Post](https://blog.tront.xyz/posts/catswarm/)**
 
 ![catswarm screenshot](screenshot.jpg)
 
