@@ -65,6 +65,7 @@ pub struct DebugOverlay {
     /// Visual toggle controls.
     pub show_trails: bool,
     pub show_heatmap: bool,
+    pub show_particles: bool,
 
     /// Hovered cat tooltip info (updated by app each frame).
     pub hovered_cat: Option<HoveredCatInfo>,
@@ -137,6 +138,7 @@ impl DebugOverlay {
             selected_mode_index: 1, // Play
             show_trails: false,
             show_heatmap: false,
+            show_particles: true,
             hovered_cat: None,
             frame_count: 0,
             log_timer: 0.0,
@@ -282,6 +284,7 @@ impl DebugOverlay {
         let mut selected_mode_index = self.selected_mode_index;
         let mut show_trails = self.show_trails;
         let mut show_heatmap = self.show_heatmap;
+        let mut show_particles = self.show_particles;
 
         let ctx = self.egui_ctx.clone();
         let full_output = ctx.run(raw_input, |ctx| {
@@ -289,6 +292,7 @@ impl DebugOverlay {
                 ctx, &ui_state,
                 &mut paused, &mut target_cat_count, &mut present_mode_index,
                 &mut selected_mode_index, &mut show_trails, &mut show_heatmap,
+                &mut show_particles,
             );
         });
 
@@ -308,6 +312,7 @@ impl DebugOverlay {
         self.selected_mode_index = selected_mode_index;
         self.show_trails = show_trails;
         self.show_heatmap = show_heatmap;
+        self.show_particles = show_particles;
 
         self.egui_state
             .handle_platform_output(window, full_output.platform_output);
@@ -394,6 +399,7 @@ fn draw_ui(
     selected_mode_index: &mut usize,
     show_trails: &mut bool,
     show_heatmap: &mut bool,
+    show_particles: &mut bool,
 ) {
     if !s.visible {
         return;
@@ -534,6 +540,7 @@ fn draw_ui(
             ui.heading("Visuals");
             ui.checkbox(show_trails, "Show Trails");
             ui.checkbox(show_heatmap, "Show Heatmap");
+            ui.checkbox(show_particles, "Show Particles");
             ui.add_space(4.0);
 
             // --- Mode ---

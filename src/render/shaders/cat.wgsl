@@ -210,6 +210,51 @@ fn cat_sleeping(uv: vec2<f32>) -> f32 {
     return d;
 }
 
+// SDF heart shape (for love/chase particles)
+fn sd_heart(uv: vec2<f32>) -> f32 {
+    let p = (uv - vec2<f32>(0.5, 0.5)) * 2.5;
+    let q = vec2<f32>(abs(p.x), -p.y + 0.5);
+    let a = q - vec2<f32>(0.25, 0.75);
+    let b = q - vec2<f32>(0.0, 0.25);
+    let r = q - clamp(vec2<f32>(0.0, 0.75), vec2<f32>(0.0, 0.25), q);
+    let d = min(dot(a, a), dot(b, b));
+    let s = max(
+        (q.x + q.y - 1.0) * 0.5,
+        -length(q - vec2<f32>(0.25, 0.75)) + 0.5
+    );
+    // Simple approximation
+    let heart_d = length(q - vec2<f32>(0.0, 0.4)) - 0.5;
+    let top_l = sd_circle(uv, vec2<f32>(0.38, 0.38), 0.17);
+    let top_r = sd_circle(uv, vec2<f32>(0.62, 0.38), 0.17);
+    let bottom = sd_triangle(uv,
+        vec2<f32>(0.22, 0.48),
+        vec2<f32>(0.5, 0.82),
+        vec2<f32>(0.78, 0.48)
+    );
+    return min(min(top_l, top_r), bottom);
+}
+
+// SDF 4-point star (for sparkle/excitement particles)
+fn sd_star(uv: vec2<f32>) -> f32 {
+    let p = (uv - vec2<f32>(0.5, 0.5)) * 3.0;
+    // Diamond rotated 45 degrees combined with regular diamond
+    let d1 = (abs(p.x) + abs(p.y)) - 0.6;           // diamond
+    let d2 = (abs(p.x * 0.707 - p.y * 0.707) +
+              abs(p.x * 0.707 + p.y * 0.707)) - 0.4; // rotated diamond
+    return min(d1, d2) / 3.0;
+}
+
+// SDF Z-letter shape (for sleeping particles)
+fn sd_z_letter(uv: vec2<f32>) -> f32 {
+    let p = (uv - vec2<f32>(0.5, 0.5)) * 3.0;
+    // Three horizontal/diagonal strokes forming Z
+    let top = max(abs(p.x) - 0.5, abs(p.y - 0.5) - 0.1);       // top bar
+    let bottom = max(abs(p.x) - 0.5, abs(p.y + 0.5) - 0.1);    // bottom bar
+    let diag_d = abs(p.x * 0.707 + p.y * 0.707);                // diagonal
+    let diag = max(diag_d - 0.12, max(abs(p.x) - 0.55, abs(p.y) - 0.55));
+    return min(min(top, bottom), diag) / 3.0;
+}
+
 // Rotate a 2D point around (0.5, 0.5)
 fn rotate_uv(uv: vec2<f32>, angle: f32) -> vec2<f32> {
     let c = cos(angle);
@@ -226,13 +271,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         uv = rotate_uv(uv, in.rotation);
     }
 
-    // Select cat shape based on frame/state
-    // frame encoding: 0=idle/groom, 1=walk/run/chase, 2=sleep, 3=circle
+    // Select shape based on frame
+    // 0=sitting, 1=walking, 2=sleeping, 3=circle, 4=heart, 5=star, 6=Z-letter
     var d: f32;
     let state = in.frame;
 
-    if state == 3u {
-        // Simple circle (used for laser dot, yarn ball, particles)
+    if state == 6u {
+        d = sd_z_letter(uv);
+    } else if state == 5u {
+        d = sd_star(uv);
+    } else if state == 4u {
+        d = sd_heart(uv);
+    } else if state == 3u {
         d = sd_circle(uv, vec2<f32>(0.5, 0.5), 0.25);
     } else if state == 2u {
         d = cat_sleeping(uv);

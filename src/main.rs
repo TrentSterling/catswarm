@@ -6,6 +6,7 @@ mod debug;
 mod ecs;
 mod heatmap;
 mod mode;
+mod particles;
 mod platform;
 mod render;
 mod spatial;
