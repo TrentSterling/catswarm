@@ -26,6 +26,7 @@ use crate::render::trail::TrailSystem;
 use crate::render::GpuState;
 use crate::spatial::{CatSnapshot, SpatialHash};
 use crate::daynight::DayNightState;
+use crate::particles::ParticleSystem;
 use crate::toy::YarnBall;
 
 /// Target simulation tick rate (seconds per tick).
@@ -85,6 +86,9 @@ struct App {
     // Toy
     yarn_ball: YarnBall,
 
+    // Emotion particles
+    particles: ParticleSystem,
+
     // Day/night cycle
     daynight: DayNightState,
 
@@ -128,6 +132,7 @@ impl App {
             trail_system: TrailSystem::new(),
             heatmap: Heatmap::new(1.0, 1.0),
             yarn_ball: YarnBall::new(),
+            particles: ParticleSystem::new(),
             daynight: DayNightState::new(),
             desktop_windows: Vec::new(),
             window_refresh_timer: 0.0,
@@ -215,6 +220,22 @@ impl App {
 
             // Advance spawn drop-in animations
             update_spawn_animations(&mut self.world, TICK_RATE as f32);
+
+            // Emotion particles: gather cat states, spawn particles, update physics
+            if self.particles.enabled {
+                let mut cat_states: Vec<(glam::Vec2, BehaviorState, f32)> =
+                    Vec::with_capacity(self.world.len() as usize);
+                for (_, (pos, cat_state, appearance)) in self
+                    .world
+                    .query::<(&Position, &CatState, &Appearance)>()
+                    .iter()
+                {
+                    cat_states.push((pos.0, cat_state.state, appearance.size));
+                }
+                self.particles
+                    .spawn_from_behaviors(&cat_states, &mut self.rng, TICK_RATE as f32);
+                self.particles.update(TICK_RATE as f32);
+            }
 
             self.accumulator -= TICK_RATE;
             self.tick_count += 1;
@@ -308,6 +329,11 @@ impl App {
                 frame: 3,          // circle SDF
                 rotation: 0.0,
             });
+        }
+
+        // Emotion particles
+        if self.particles.enabled {
+            self.particles.build_instances(&mut self.instance_buf);
         }
 
         timers.end(SystemPhase::BuildInstances);
@@ -532,6 +558,7 @@ impl ApplicationHandler for App {
             debug.energy_scale = self.mode_state.behavior_energy_scale;
             self.trail_system.enabled = debug.show_trails;
             self.heatmap.enabled = debug.show_heatmap;
+            self.particles.enabled = debug.show_particles;
 
             // Tooltip hit-test: find nearest cat to mouse cursor
             if debug.visible {
