@@ -27,7 +27,7 @@ use crate::render::GpuState;
 use crate::spatial::{CatSnapshot, SpatialHash};
 use crate::daynight::DayNightState;
 use crate::particles::ParticleSystem;
-use crate::toy::YarnBalls;
+use crate::toy::{Boxes, YarnBalls};
 use crate::tray::{TrayCommand, TrayIcon};
 
 /// Target simulation tick rate (seconds per tick).
@@ -86,6 +86,7 @@ struct App {
 
     // Toys
     yarn_balls: YarnBalls,
+    boxes: Boxes,
 
     // Emotion particles
     particles: ParticleSystem,
@@ -136,6 +137,7 @@ impl App {
             trail_system: TrailSystem::new(),
             heatmap: Heatmap::new(1.0, 1.0),
             yarn_balls: YarnBalls::new(),
+            boxes: Boxes::new(),
             particles: ParticleSystem::new(),
             daynight: DayNightState::new(),
             tray: TrayIcon::new(),
@@ -199,6 +201,16 @@ impl App {
             self.yarn_balls
                 .update(TICK_RATE as f32, self.screen_w as f32, self.screen_h as f32, mouse_vec);
 
+            // Update box lifetimes
+            self.boxes.update(TICK_RATE as f32);
+
+            // B key spawns a cardboard box at cursor
+            #[cfg(windows)]
+            if platform::win32::is_b_pressed() {
+                self.boxes.spawn(mouse_vec);
+                log::info!("Cardboard box placed at ({:.0}, {:.0})", mouse_vec.x, mouse_vec.y);
+            }
+
             systems::tick(
                 &mut self.world,
                 TICK_RATE as f32,
@@ -218,13 +230,14 @@ impl App {
                 energy_scale,
             );
 
-            // Click interactions (startle, treats, laser, yarn ball)
+            // Click interactions (startle, treats, laser, yarn ball, boxes)
             systems::click::update(
                 &mut self.world,
                 &self.click_state,
                 glam::Vec2::new(mouse_x, mouse_y),
                 &mut self.rng,
                 &mut self.yarn_balls,
+                &mut self.boxes,
             );
 
             // Advance spawn drop-in animations — collect bounce impacts for dust
@@ -328,6 +341,15 @@ impl App {
                 });
             }
 
+            // --- Fur puffing when startled ---
+            // Brief size spike that decays over the startle duration (0.3s).
+            if cat_state.state == BehaviorState::Startled {
+                // timer counts down from ~0.3. Puff is strongest at start.
+                let puff = (cat_state.timer / 0.3).clamp(0.0, 1.0) * 0.35;
+                inst.size[0] *= 1.0 + puff;
+                inst.size[1] *= 1.0 + puff;
+            }
+
             // --- Squash & stretch based on velocity ---
             let speed = vel.0.length();
             // Falling/jumping: stretch vertically (taller, thinner)
@@ -385,7 +407,8 @@ impl App {
             inst.color = apply_tint(inst.color, self.daynight.tint);
 
             // Eye glow at night: add 8 to frame index to signal shader
-            if self.daynight.is_night && inst.frame <= 1 {
+            let force_eyes = self.debug.as_ref().map_or(false, |d| d.force_night_eyes);
+            if (self.daynight.is_night || force_eyes) && (inst.frame == 0 || inst.frame == 1 || inst.frame == 7) {
                 inst.frame += 8;
             }
 
@@ -400,6 +423,20 @@ impl App {
                 size: [1.0, 1.0],
                 color: (0xDD << 24) | (0x33 << 16) | (0x33 << 8) | alpha,
                 frame: 3,
+                rotation: 0.0,
+            });
+        }
+
+        // Render cardboard boxes
+        for cbox in &self.boxes.boxes {
+            let fade = (cbox.lifetime / 5.0).clamp(0.0, 1.0);
+            let alpha = (fade * 255.0) as u32;
+            // Cardboard brown color
+            self.instance_buf.push(CatInstance {
+                position: cbox.pos.into(),
+                size: [3.0, 3.0],
+                color: (0xC4 << 24) | (0x8A << 16) | (0x3F << 8) | alpha,
+                frame: 9,
                 rotation: 0.0,
             });
         }
