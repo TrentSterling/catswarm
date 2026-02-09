@@ -6,6 +6,14 @@ use crate::ecs::components::{BehaviorState, CatState, Personality, Position, Vel
 const WALK_SPEED: f32 = 40.0;
 /// Max run speed in pixels/second.
 const RUN_SPEED: f32 = 120.0;
+/// Zoomies speed — fast and frantic.
+const ZOOMIES_SPEED: f32 = 300.0;
+/// Chance per tick that an idle/walking cat gets zoomies (before energy mult).
+const ZOOMIES_CHANCE: f32 = 0.003;
+/// Startled upward velocity spike.
+const STARTLE_JUMP_VY: f32 = -200.0;
+/// Startled horizontal scatter speed.
+const STARTLE_SCATTER: f32 = 100.0;
 
 /// Update cat behavior state machines — handle transitions, timers.
 pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
@@ -14,13 +22,27 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
     {
         state.timer -= dt;
 
-        if state.timer <= 0.0 {
-            // Transition to a new state
-            transition(state, personality, vel, pos, rng);
-        }
-
         // Per-state tick behavior
         match state.state {
+            BehaviorState::Zoomies => {
+                // Random direction change every 0.3-0.5s (tracked via sub-timer hack:
+                // we check if timer crosses a 0.4s boundary)
+                let prev = state.timer + dt;
+                let interval = 0.4;
+                if (prev / interval).floor() != (state.timer / interval).floor() {
+                    let angle = rng.f32() * std::f32::consts::TAU;
+                    let speed = ZOOMIES_SPEED * (0.8 + rng.f32() * 0.4);
+                    vel.0 = Vec2::new(angle.cos(), angle.sin()) * speed;
+                }
+            }
+            BehaviorState::Startled => {
+                // Brief upward jump + gravity pull back (0.3s duration)
+                // Simulate gravity: pull velocity Y toward 0 rapidly
+                vel.0.y += 600.0 * dt; // gravity pulls back down
+            }
+            BehaviorState::Yawning => {
+                // Stationary — velocity decays via friction
+            }
             BehaviorState::Walking => {
                 // Velocity was set on transition, friction handles slowdown
             }
@@ -39,6 +61,38 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
                 // Handled by interaction system
             }
         }
+
+        if state.timer <= 0.0 {
+            // Special transitions from certain states
+            match state.state {
+                BehaviorState::Startled => {
+                    // After startled, transition to Running (flee direction)
+                    state.state = BehaviorState::Running;
+                    state.timer = 0.5 + rng.f32() * 1.0;
+                    // Keep current velocity direction but normalize to run speed
+                    let dir = vel.0.normalize_or_zero();
+                    vel.0 = dir * RUN_SPEED;
+                    continue;
+                }
+                BehaviorState::Yawning => {
+                    // After yawning, fall asleep
+                    state.state = BehaviorState::Sleeping;
+                    state.timer = 3.0 + rng.f32() * 5.0;
+                    vel.0 = Vec2::ZERO;
+                    continue;
+                }
+                BehaviorState::Zoomies => {
+                    // After zoomies, rest (idle)
+                    state.state = BehaviorState::Idle;
+                    state.timer = 1.0 + rng.f32() * 2.0;
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Normal transition to a new state
+            transition(state, personality, vel, pos, rng);
+        }
     }
 }
 
@@ -50,6 +104,16 @@ fn transition(
     _pos: &Position,
     rng: &mut fastrand::Rng,
 ) {
+    // Check for zoomies first (rare, energy-weighted)
+    let zoomies_chance = ZOOMIES_CHANCE * personality.energy;
+    if rng.f32() < zoomies_chance {
+        state.state = BehaviorState::Zoomies;
+        state.timer = 1.0 + rng.f32() * 1.0; // 1-2s
+        let angle = rng.f32() * std::f32::consts::TAU;
+        vel.0 = Vec2::new(angle.cos(), angle.sin()) * ZOOMIES_SPEED;
+        return;
+    }
+
     // Weighted random state selection based on personality
     let roll = rng.f32();
 
@@ -103,4 +167,17 @@ fn transition(
     let angle = rng.f32() * std::f32::consts::TAU;
     let speed = RUN_SPEED * (0.5 + personality.energy * 0.5);
     vel.0 = Vec2::new(angle.cos(), angle.sin()) * speed;
+}
+
+/// Trigger a startle on a specific entity (called externally by interaction/click systems).
+pub fn trigger_startle(
+    state: &mut CatState,
+    vel: &mut Velocity,
+    rng: &mut fastrand::Rng,
+) {
+    state.state = BehaviorState::Startled;
+    state.timer = 0.3;
+    // Upward spike + random horizontal scatter
+    vel.0.y += STARTLE_JUMP_VY;
+    vel.0.x += (rng.f32() - 0.5) * STARTLE_SCATTER * 2.0;
 }
