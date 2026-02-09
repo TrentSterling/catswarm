@@ -27,6 +27,11 @@ fastrand = "2"
 # Time
 instant = "0.1"
 
+# Debug overlay
+egui = "0.33"
+egui-winit = "0.33"
+egui-wgpu = "0.33"
+
 # Logging
 log = "0.4"
 env_logger = "0.11"
@@ -41,6 +46,7 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
     "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
 ] }
 
 [profile.release]

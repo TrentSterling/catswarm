@@ -1,6 +1,8 @@
 mod app;
 mod cat;
+mod debug;
 mod ecs;
+mod mode;
 mod platform;
 mod render;
 mod spatial;
