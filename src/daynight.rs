@@ -10,6 +10,8 @@ pub struct DayNightState {
     pub tint: [f32; 3],
     /// Energy scale modifier (multiplied with mode energy scale).
     pub energy_modifier: f32,
+    /// True when it's dark enough for eye glow (before 6am or after 20:00).
+    pub is_night: bool,
 }
 
 impl DayNightState {
@@ -18,6 +20,7 @@ impl DayNightState {
             hour: 12.0,
             tint: [1.0, 1.0, 1.0],
             energy_modifier: 1.0,
+            is_night: false,
         };
         s.update();
         s
@@ -36,6 +39,7 @@ impl DayNightState {
         }
         self.tint = compute_tint(self.hour);
         self.energy_modifier = compute_energy_modifier(self.hour);
+        self.is_night = self.hour < 6.0 || self.hour >= 20.0;
     }
 }
 

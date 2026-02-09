@@ -11,6 +11,7 @@ mod platform;
 mod render;
 mod spatial;
 mod toy;
+mod tray;
 
 
 fn main() {

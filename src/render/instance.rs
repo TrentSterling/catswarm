@@ -28,13 +28,14 @@ impl CatInstance {
         appearance: &Appearance,
         cat_state: &CatState,
         alpha: f32,
+        time: f32,
     ) -> Self {
         // Lerp between previous and current position for smooth rendering
         let interp = Vec2::lerp(prev_pos.0, pos.0, alpha);
 
         // Map behavior state to shader frame index
-        let frame = match cat_state.state {
-            BehaviorState::Sleeping => 2,
+        let is_moving = matches!(
+            cat_state.state,
             BehaviorState::Walking
             | BehaviorState::Running
             | BehaviorState::ChasingMouse
@@ -42,8 +43,25 @@ impl CatInstance {
             | BehaviorState::ChasingCat
             | BehaviorState::Zoomies
             | BehaviorState::Startled
-            | BehaviorState::Parading => 1,
-            _ => 0, // Idle, Grooming, Playing, Yawning
+            | BehaviorState::Parading
+        );
+
+        let frame = if cat_state.state == BehaviorState::Sleeping {
+            2
+        } else if is_moving {
+            // Walk cycle: alternate between frame 1 and 7.
+            // Use position as phase offset so each cat steps differently.
+            // Speed-based: faster cats cycle faster.
+            let phase_offset = pos.0.x * 0.013 + pos.0.y * 0.017;
+            let cycle_speed = match cat_state.state {
+                BehaviorState::Running | BehaviorState::Zoomies => 8.0,
+                BehaviorState::Walking | BehaviorState::Parading => 3.5,
+                _ => 5.0,
+            };
+            let phase = (time * cycle_speed + phase_offset).sin();
+            if phase > 0.0 { 1 } else { 7 }
+        } else {
+            0 // Idle, Grooming, Playing, Yawning
         };
 
         Self {
