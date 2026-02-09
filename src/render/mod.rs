@@ -1,0 +1,212 @@
+pub mod instance;
+pub mod pipeline;
+
+use std::sync::Arc;
+use winit::window::Window;
+
+use self::instance::CatInstance;
+use self::pipeline::CatPipeline;
+
+/// Core GPU state — device, queue, surface, pipeline.
+pub struct GpuState {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub surface: wgpu::Surface<'static>,
+    pub surface_config: wgpu::SurfaceConfiguration,
+    pub cat_pipeline: CatPipeline,
+}
+
+impl GpuState {
+    /// Initialize wgpu and the cat rendering pipeline.
+    pub fn new(window: Arc<Window>) -> Self {
+        let size = window.inner_size();
+
+        // DX12 only — Vulkan WSI on Windows doesn't support transparent composition.
+        // Use DirectComposition presentation for per-pixel alpha transparency.
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            backend_options: wgpu::BackendOptions {
+                dx12: wgpu::Dx12BackendOptions {
+                    presentation_system: wgpu_types::Dx12SwapchainKind::DxgiFromVisual,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let surface = instance
+            .create_surface(window)
+            .expect("failed to create wgpu surface");
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }))
+        .expect("no suitable GPU adapter found");
+
+        log::info!(
+            "GPU adapter: {:?} ({:?})",
+            adapter.get_info().name,
+            adapter.get_info().backend
+        );
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("pettoy_device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            },
+        ))
+        .expect("failed to create wgpu device");
+
+        let surface_caps = surface.get_capabilities(&adapter);
+
+        let format = surface_caps
+            .formats
+            .iter()
+            .find(|f| **f == wgpu::TextureFormat::Bgra8UnormSrgb)
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        log::info!("Available alpha modes: {:?}", surface_caps.alpha_modes);
+
+        let alpha_mode = if surface_caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+        {
+            wgpu::CompositeAlphaMode::PreMultiplied
+        } else if surface_caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+        {
+            wgpu::CompositeAlphaMode::PostMultiplied
+        } else {
+            wgpu::CompositeAlphaMode::Auto
+        };
+
+        log::info!(
+            "Surface: format={:?}, alpha_mode={:?}",
+            format,
+            alpha_mode,
+        );
+
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &surface_config);
+
+        // Create the cat rendering pipeline
+        let cat_pipeline = CatPipeline::new(&device, format);
+
+        // Set initial screen size uniform
+        cat_pipeline.update_screen_size(
+            &queue,
+            surface_config.width as f32,
+            surface_config.height as f32,
+        );
+
+        Self {
+            device,
+            queue,
+            surface,
+            surface_config,
+            cat_pipeline,
+        }
+    }
+
+    /// Resize the surface.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.surface_config.width = width;
+        self.surface_config.height = height;
+        self.surface.configure(&self.device, &self.surface_config);
+        self.cat_pipeline
+            .update_screen_size(&self.queue, width as f32, height as f32);
+    }
+
+    /// Upload instance data for this frame.
+    pub fn update_instances(&mut self, instances: &[CatInstance]) {
+        self.cat_pipeline
+            .update_instances(&self.queue, instances);
+    }
+
+    /// Render a frame — clear to transparent and draw all cat instances.
+    pub fn render_frame(&self) -> bool {
+        let output = match self.surface.get_current_texture() {
+            Ok(output) => output,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                self.surface
+                    .configure(&self.device, &self.surface_config);
+                return false;
+            }
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                log::error!("GPU out of memory");
+                return false;
+            }
+            Err(e) => {
+                log::warn!("Surface error: {e:?}");
+                return false;
+            }
+        };
+
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame_encoder"),
+            });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("cat_render_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // Draw cat instances
+            let p = &self.cat_pipeline;
+            if p.num_instances > 0 {
+                render_pass.set_pipeline(&p.pipeline);
+                render_pass.set_bind_group(0, &p.screen_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, p.vertex_buffer.slice(..));
+                render_pass.set_vertex_buffer(1, p.instance_buffer.slice(..));
+                render_pass.set_index_buffer(p.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..6, 0, 0..p.num_instances);
+            }
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+        true
+    }
+}
