@@ -1,77 +1,9 @@
 # PetToy — Session Resume (2026-02-09)
 
-## Overnight Edits (Not Yet Compiled)
-The following changes were made as source edits only — **not compiled or tested yet**.
+## Current State: ALL COMPILED, RUNNING, PUSHED
+Latest commit: `4807cc9` — pushed to origin/master.
 
-### Dead Code Cleanup
-- Removed unused `src/util/pool.rs`, `src/util/mod.rs` (Pool struct never used)
-- Removed unused `src/cat/animation.rs`, `src/cat/personality.rs` (stubs, never imported)
-- Removed unused `glam::Vec2` import in `window_aware.rs`
-- Removed unused `PARADE_FOLLOW_DIST` constant (later re-added when follow-the-leader was implemented)
-
-### Sleeping Pile Detection
-- **`components.rs`**: Added `SleepingPile { breathing_offset: f32 }` component
-- **`interaction.rs`**: Added `sleeping_neighbor_count` buffer, pile detection in phase_read (40px radius, 3+ cats), pile management in new `phase_sleeping_piles` function
-- **Wake cascade**: When a pile member is disturbed (state changes from Sleeping), all sleeping cats within 80px get gently startled
-- **`app.rs`**: Breathing animation for pile members (±4% size oscillation via `sin(time * 2 + offset)`)
-
-### Size-Based Behavior Variation
-- **`behavior.rs`**: Added `size_speed_mult()` — kittens (0.6) move at 1.3x speed, chonkers (1.4) at 0.7x
-- **`behavior.rs`**: Transition weights modulated by size (big cats lazier, small cats more energetic, zoomies chance scaled)
-- **`spatial/mod.rs`**: Added `size: f32` to `CatSnapshot`
-- **`spatial.rs`**: Snapshot rebuild now includes `Appearance.size`
-- **`interaction.rs`**: Separation force scaled by neighbor's size (bigger cats push harder)
-
-### Parade Follow-the-Leader Improvement
-- **`interaction.rs`**: Added `parade_follow_pos` and `parade_follow_dist_sq` buffers
-- Followers now steer toward a point 40px behind the nearest aligned cat ahead of them
-- Leaders (no one ahead) maintain parade direction as before
-- Creates visible conga-line spacing instead of just velocity alignment
-
-### Day/Night Cycle
-- **`daynight.rs`** (NEW): `DayNightState` with hour, tint, and energy modifier
-- Tint: warm golden dawn, neutral day, orange dusk, blue-purple evening, cool blue night
-- Energy modifier: 0.4x at night, 0.8x dawn/evening, 1.0x during day
-- Uses `GetLocalTime` Win32 API for accurate local time
-- **`win32.rs`**: Added `get_local_hour()` function
-- **`behavior.rs`**: Now accepts `energy_scale` parameter (mode preset × day/night modifier)
-- **`app.rs`**: `apply_tint()` function modifies instance colors, energy_scale passed to tick
-
-### Wiring Changes
-- **`systems/mod.rs`**: `tick()` now takes `energy_scale: f32` parameter
-- **`behavior.rs`**: `update()` and `transition()` accept and use `energy_scale`
-- **`main.rs`**: Added `mod daynight;`, removed `mod util;`
-
-### Files Modified (Overnight)
-| File | Changes |
-|------|---------|
-| `src/main.rs` | Added daynight module, removed util module |
-| `src/app.rs` | DayNightState, tint in instances, breathing animation, energy_scale |
-| `src/daynight.rs` | **NEW** — day/night cycle system |
-| `src/ecs/components.rs` | Added SleepingPile component |
-| `src/ecs/systems/mod.rs` | Added energy_scale param to tick() |
-| `src/ecs/systems/behavior.rs` | Size speed mult, energy_scale, Appearance query |
-| `src/ecs/systems/interaction.rs` | Sleeping piles, size separation, follow-the-leader parade |
-| `src/ecs/systems/spatial.rs` | Size in snapshot, Appearance in query |
-| `src/ecs/systems/window_aware.rs` | Removed unused Vec2 import |
-| `src/spatial/mod.rs` | Added size field to CatSnapshot |
-| `src/platform/win32.rs` | Added get_local_hour() |
-| Deleted: `src/util/*`, `src/cat/animation.rs`, `src/cat/personality.rs` | Dead code removed |
-
-### To Build & Test
-```bash
-cargo build   # will compile all overnight changes
-cargo run     # launch and verify visually
-```
-Expected: no errors (all changes are consistent), cats should show:
-- Day/night tint based on current time
-- Sleeping pile breathing when 3+ cats cluster while sleeping
-- Size-varied speeds (small cats zip, big cats lumber)
-- Follow-the-leader parade spacing
-
----
-
-## What Was Done This Session
+## What Was Done
 
 ### v0.2.0 Desktop Companion Overhaul (5 Batches — COMPLETE)
 All 5 batches from the original plan were implemented and committed:
@@ -82,22 +14,34 @@ All 5 batches from the original plan were implemented and committed:
 5. **Visual Flourishes** — Cat trails (per-cat ring buffer, LineList pipeline), cursor heatmap (64x64, R8Unorm)
 
 ### Flocking + Population Growth
-- Added boid-like cohesion (radius=120px, strength=8) and alignment (strength=5) to the existing separation system
+- Boid-like cohesion (radius=120px, strength=8) and alignment (strength=5)
 - Colony starts at 20 cats, grows ~2/sec after 5s delay up to 1000
-- Debug overlay slider overrides natural growth
+- Debug overlay slider overrides natural growth (only on explicit change)
 
-### Feature Batch (Latest Commit)
-All implemented and compiling:
-- **Parade detection** — 3+ cats walking same direction form conga lines (interaction.rs)
-- **Heatmap avoidance** — Cats steer away from cursor hot zones (movement.rs)
-- **Edge affinity** — Work mode pushes cats toward screen edges (movement.rs)
-- **Window awareness** — Cats perch on desktop window titlebars (window_aware.rs, enumerate every 2s)
-- **Cat names + tooltips** — Procedural names ("Professor Whiskers"), hover tooltip in debug overlay
-- **Yarn ball toy** — Middle-click spawns/throws, cats chase and bat it, rendered as red dot
-- **Middle-click detection** — Added to Win32 input polling
+### Feature Batch
+- **Parade detection** — 3+ cats walking same direction, follow-the-leader (40px spacing)
+- **Heatmap avoidance** — Cats steer away from cursor hot zones
+- **Edge affinity** — Work mode pushes cats toward screen edges
+- **Window awareness** — Cats perch on desktop window titlebars (enumerate every 2s)
+- **Cat names + tooltips** — Procedural names ("Professor Whiskers"), hover tooltip
+- **Yarn ball toy** — Middle-click spawns/throws, cats chase and bat it
+- **Trail color by mood** — green (walking), red (zoomies), blue (sleeping), etc.
+
+### Sleeping Piles + Size Variation + Day/Night
+- **Sleeping piles**: 3+ sleeping cats within 40px, breathing animation (±4% sin), wake cascade
+- **Size variation**: kittens (0.6x) move 1.3x speed, chonkers (1.4x) 0.7x, laziness/energy shift
+- **Day/night cycle**: golden dawn, neutral day, orange dusk, blue night + energy 0.4x-1.0x
+- **Dead code cleanup**: removed util/pool, cat/animation, cat/personality stubs
+
+### Bug Fixes
+- **Minimize/restore bug**: Windows sends small non-zero resize during minimize animation. Fix: ignore resize < 200x200, pause sim when `is_minimized()` in both `about_to_wait` AND `RedrawRequested`, reset frame timer
+- **Flickering/teleporting bug**: Debug `target_cat_count=20` fought population growth (target=1000) every frame. Fix: init to 1000, only sync on explicit slider change via `cat_count_changed` flag
 
 ## Git Log (Latest First)
 ```
+4807cc9 Add sleeping piles, size variation, day/night cycle, and fix minimize/flicker bugs
+bd8d27c Add mood-colored trails: trail color reflects behavior state
+33fbf6b Add resume.md and suggestions.md for session continuity
 9eef6ce Add parade detection, heatmap avoidance, edge affinity, window awareness, cat names with tooltips, and yarn ball toy
 8eebfe1 Add boid-like flocking and gradual population growth
 603ebcc Bump to v0.2.0, update docs for Desktop Companion Overhaul
@@ -110,12 +54,8 @@ cbd8aeb Add mode system (Work/Play/Zen/Chaos) with AFK escalation
 ## What's Left (from suggestions.md)
 
 ### Not Yet Implemented
+- [ ] Emotion particles (hearts, zzz, !, stars)
 - [ ] Animated sprite frames (multi-frame walking, tail swish, blinking)
-- [ ] Size variation beyond Appearance.size (kittens vs chonkers behavior)
-- [ ] Sleeping piles (visual merge when 3+ cats sleep together)
-- [ ] Day/night cycle (system clock tinting)
-- [ ] Emotion particles (hearts, zzz, !, etc.)
-- [ ] Trail color by mood
 - [ ] Breeding & kittens
 - [ ] Territory & scent marking
 - [ ] System tray icon
@@ -126,40 +66,17 @@ cbd8aeb Add mode system (Work/Play/Zen/Chaos) with AFK escalation
 - [ ] Multi-monitor support
 - [ ] Notification reactions
 - [ ] Audio (opt-in purring/meow)
-- [ ] Cat economy
-- [ ] Seasonal events
-- [ ] Personality archetypes v2
-- [ ] Screenshot mode
-- [ ] Achievements
+- [ ] Enhanced laser pointer (butt-wiggle, glow trail)
+- [ ] Feather wand toy
 
 ### Wired But Could Be Improved
-- **Parade detection** — Works but no visual distinction (same walking frame). Could add parade-specific animation.
-- **Window awareness** — Basic perching on titlebars. Could add sitting on corners, dangling tails, peeking over browser tabs.
-- **Yarn ball** — Rendered as a small red cat silhouette (reuses frame=0). Could get its own shader/sprite.
-- **Heatmap avoidance** — Uses gradient sampling. Could be more aggressive or have per-cat sensitivity.
-- **Cat names** — Only visible in debug overlay. Could add floating name tags option.
+- **Parade** — No visual distinction (same walking frame). Could add parade animation.
+- **Window awareness** — Basic perching. Could add corners, dangling tails, peeking.
+- **Yarn ball** — Rendered as small red dot (reuses frame=0). Could get own sprite.
+- **Heatmap avoidance** — Could be more aggressive or per-cat sensitivity.
+- **Cat names** — Only in debug overlay. Could add floating name tags.
 
-## Architecture Notes for Resuming
-
-### Key Files Modified This Session
-| File | What Changed |
-|------|-------------|
-| `src/ecs/components.rs` | Added `Parading` state, `CatName` component |
-| `src/ecs/systems/interaction.rs` | Flocking buffers, parade detection+application |
-| `src/ecs/systems/movement.rs` | Heatmap avoidance, edge affinity |
-| `src/ecs/systems/mod.rs` | Expanded tick() with heatmap, edge_affinity, platforms params |
-| `src/ecs/systems/window_aware.rs` | Full implementation with DesktopWindow struct |
-| `src/ecs/systems/click.rs` | Yarn ball chase + bat logic |
-| `src/ecs/systems/behavior.rs` | Parading state handling |
-| `src/cat/mod.rs` | Name generation, CatName in spawn |
-| `src/click.rs` | Middle-click support |
-| `src/toy.rs` | **NEW** — Yarn ball physics |
-| `src/platform/win32.rs` | Middle-click detection |
-| `src/debug/mod.rs` | HoveredCatInfo, tooltip rendering |
-| `src/app.rs` | Wired everything: yarn ball, platforms, tooltips, heatmap/edge params |
-| `suggestions.md` | **NEW** — Full feature roadmap |
-
-### Build & Run
+## Build & Run
 ```bash
 cargo build          # ~6s incremental
 cargo run            # launches overlay
@@ -168,14 +85,9 @@ cargo run            # launches overlay
 - **Left-click** startle | **Right-click** treat | **Double-click** laser (5s)
 - **Middle-click** yarn ball (spawn/throw)
 
-### Behavior State Machine (12 states)
+## Behavior State Machine (13 states)
 ```
 Idle, Walking, Running, Sleeping, Grooming,
 ChasingMouse, FleeingCursor, ChasingCat, Playing,
 Zoomies, Startled, Yawning, Parading
 ```
-
-### Performance at 4096 Cats (4K Display)
-- ~560-630 FPS
-- Interaction system is main bottleneck (78% of CPU time)
-- Total CPU: ~2.8ms per frame

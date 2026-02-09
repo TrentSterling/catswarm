@@ -2,11 +2,16 @@ use crate::ecs::components::*;
 use glam::Vec2;
 
 /// Spawn a batch of cats with randomized attributes.
+/// Cats start above the screen and drop in with a somersault animation.
 pub fn spawn_cats(world: &mut hecs::World, count: usize, screen_w: f32, screen_h: f32) {
     let mut rng = fastrand::Rng::new();
 
     for _ in 0..count {
-        let pos = Vec2::new(rng.f32() * screen_w, rng.f32() * screen_h);
+        let target_x = rng.f32() * screen_w;
+        let target_y = rng.f32() * screen_h;
+        // Start above the screen with some horizontal spread
+        let start_y = -(rng.f32() * 100.0 + 30.0);
+        let pos = Vec2::new(target_x, start_y);
 
         world.spawn((
             Position(pos),
@@ -29,6 +34,18 @@ pub fn spawn_cats(world: &mut hecs::World, count: usize, screen_w: f32, screen_h
             },
             SpatialCell(0),
             CatName(generate_cat_name(&mut rng)),
+            SpawnAnimation {
+                target_y,
+                progress: 0.0,
+                speed: 0.5 + rng.f32() * 0.4, // 0.5-0.9x — slower so flips are visible
+                // Most cats flip, some don't: 0 (20%), 1 (40%), 2 (30%), 3 (10%)
+                flips: match rng.u8(0..10) {
+                    0..=1 => 0,
+                    2..=5 => 1,
+                    6..=8 => 2,
+                    _ => 3,
+                },
+            },
         ));
     }
 }

@@ -111,6 +111,12 @@ impl CatPipeline {
                     offset: 16,
                     shader_location: 5,
                 },
+                // rotation (f32)
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 20,
+                    shader_location: 6,
+                },
             ],
         };
 

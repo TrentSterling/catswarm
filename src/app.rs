@@ -12,7 +12,7 @@ use crate::debug::timer::{SystemPhase, SystemTimers};
 use crate::debug::DebugOverlay;
 use crate::ecs::components::{
     Appearance, BehaviorState, CatName, CatState, Personality, Position, PrevPosition,
-    SleepingPile,
+    SleepingPile, SpawnAnimation,
 };
 use crate::ecs::systems;
 use crate::ecs::systems::interaction::InteractionBuffers;
@@ -213,6 +213,9 @@ impl App {
                 &mut self.yarn_ball,
             );
 
+            // Advance spawn drop-in animations
+            update_spawn_animations(&mut self.world, TICK_RATE as f32);
+
             self.accumulator -= TICK_RATE;
             self.tick_count += 1;
         }
@@ -230,12 +233,35 @@ impl App {
         let alpha = self.interpolation_alpha();
         let time = self.elapsed_time as f32;
 
-        for (_, (pos, prev_pos, appearance, cat_state, pile)) in self
+        for (_, (pos, prev_pos, appearance, cat_state, pile, spawn_anim)) in self
             .world
-            .query::<(&Position, &PrevPosition, &Appearance, &CatState, Option<&SleepingPile>)>()
+            .query::<(
+                &Position,
+                &PrevPosition,
+                &Appearance,
+                &CatState,
+                Option<&SleepingPile>,
+                Option<&SpawnAnimation>,
+            )>()
             .iter()
         {
             let mut inst = CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha);
+
+            // Spawn somersault: cats tumble during the fall, land feet-first.
+            // Rotation must complete before the first bounce impact (1/2.75 ≈ 36%).
+            if let Some(anim) = spawn_anim {
+                if anim.flips > 0 {
+                    let spin_end = 1.0 / 2.75; // exact first bounce contact in bounce_out
+                    if anim.progress < spin_end {
+                        let spin_t = anim.progress / spin_end;
+                        // Ease-out quad on rotation so it decelerates smoothly
+                        let eased = spin_t * (2.0 - spin_t);
+                        let total_rotation = std::f32::consts::TAU * anim.flips as f32;
+                        inst.rotation = eased * total_rotation;
+                    }
+                    // else: rotation stays 0.0 — upright for landing
+                }
+            }
 
             // Breathing animation for sleeping pile members
             if let Some(pile) = pile {
@@ -248,14 +274,32 @@ impl App {
 
             self.instance_buf.push(inst);
         }
-        // Add yarn ball as a visible instance (red ball)
+        // Add yarn ball as a visible circle
         if self.yarn_ball.active {
             self.instance_buf.push(CatInstance {
                 position: self.yarn_ball.pos.into(),
-                size: 0.4,
-                color: 0xFF2020FF, // bright red
-                frame: 0,          // sitting frame (round-ish)
-                _pad: 0,
+                size: 0.8,
+                color: 0xDD3333FF, // red yarn ball
+                frame: 3,          // circle SDF
+                rotation: 0.0,
+            });
+        }
+
+        // Add laser pointer dot when active
+        if self.click_state.laser_active {
+            #[cfg(windows)]
+            let (mx, my) = platform::win32::get_mouse_pos();
+            #[cfg(not(windows))]
+            let (mx, my) = (0.0f32, 0.0f32);
+
+            // Pulsing glow effect
+            let pulse = (time * 12.0).sin() * 0.15 + 1.0;
+            self.instance_buf.push(CatInstance {
+                position: [mx, my],
+                size: 0.5 * pulse,
+                color: 0xFF0000FF, // bright red laser dot
+                frame: 3,          // circle SDF
+                rotation: 0.0,
             });
         }
 
@@ -402,6 +446,19 @@ impl ApplicationHandler for App {
             let f11_down = platform::win32::is_f11_pressed();
             if self.mode_state.poll_f11(f11_down) {
                 log::info!("Mode changed to: {}", self.mode_state.mode.label());
+            }
+        }
+
+        // Poll Y key for yarn ball (alternative to middle-click)
+        #[cfg(windows)]
+        if platform::win32::is_y_pressed() {
+            let (mx, my) = platform::win32::get_mouse_pos();
+            let mouse_pos = glam::Vec2::new(mx, my);
+            if self.yarn_ball.active {
+                let dir = (mouse_pos - self.yarn_ball.pos).normalize_or_zero();
+                self.yarn_ball.throw(dir * 300.0);
+            } else {
+                self.yarn_ball.spawn(mouse_pos);
             }
         }
 
@@ -816,6 +873,52 @@ fn mood_color(state: BehaviorState) -> (f32, f32, f32) {
         BehaviorState::Zoomies => (1.0, 0.2, 0.1),                 // bright red
         BehaviorState::Startled => (1.0, 0.9, 0.2),                // bright yellow
         BehaviorState::Yawning => (0.5, 0.5, 0.8),                 // muted blue
+    }
+}
+
+/// Bounce-out easing: accelerates like gravity, bounces on impact.
+fn ease_bounce_out(t: f32) -> f32 {
+    if t < 1.0 / 2.75 {
+        7.5625 * t * t
+    } else if t < 2.0 / 2.75 {
+        let t = t - 1.5 / 2.75;
+        7.5625 * t * t + 0.75
+    } else if t < 2.5 / 2.75 {
+        let t = t - 2.25 / 2.75;
+        7.5625 * t * t + 0.9375
+    } else {
+        let t = t - 2.625 / 2.75;
+        7.5625 * t * t + 0.984375
+    }
+}
+
+/// Advance spawn drop-in animations. Cats fall from above screen to their target Y.
+/// Uses bounce-out easing so they accelerate downward and bounce on landing.
+/// Removes the SpawnAnimation component when complete.
+fn update_spawn_animations(world: &mut hecs::World, dt: f32) {
+    let mut landed = Vec::new();
+
+    for (entity, (pos, prev_pos, anim)) in
+        world.query_mut::<(&mut Position, &mut PrevPosition, &mut SpawnAnimation)>()
+    {
+        anim.progress += dt * anim.speed;
+
+        if anim.progress >= 1.0 {
+            pos.0.y = anim.target_y;
+            prev_pos.0.y = anim.target_y;
+            landed.push(entity);
+        } else {
+            // Bounce-out: accelerates down (gravity feel), bounces on impact
+            let ease = ease_bounce_out(anim.progress);
+
+            let start_y = -80.0;
+            pos.0.y = start_y + (anim.target_y - start_y) * ease;
+            prev_pos.0.y = pos.0.y;
+        }
+    }
+
+    for entity in landed {
+        let _ = world.remove_one::<SpawnAnimation>(entity);
     }
 }
 
