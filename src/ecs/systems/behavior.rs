@@ -1,6 +1,6 @@
 use glam::Vec2;
 
-use crate::ecs::components::{BehaviorState, CatState, Personality, Position, Velocity};
+use crate::ecs::components::{Appearance, BehaviorState, CatState, Personality, Position, Velocity};
 
 /// Max walk speed in pixels/second.
 const WALK_SPEED: f32 = 40.0;
@@ -15,11 +15,19 @@ const STARTLE_JUMP_VY: f32 = -200.0;
 /// Startled horizontal scatter speed.
 const STARTLE_SCATTER: f32 = 100.0;
 
+/// Speed multiplier based on cat size. Kittens (0.6) are fast, chonkers (1.4) are slow.
+fn size_speed_mult(size: f32) -> f32 {
+    // 0.6 → 1.3x, 1.0 → 1.0x, 1.4 → 0.7x
+    (1.0 + (1.0 - size) * 0.75).clamp(0.5, 1.5)
+}
+
 /// Update cat behavior state machines — handle transitions, timers.
-pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
-    for (_, (state, personality, vel, pos)) in world
-        .query_mut::<(&mut CatState, &Personality, &mut Velocity, &Position)>()
+/// `energy_scale` combines mode preset with day/night modifier.
+pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng, energy_scale: f32) {
+    for (_, (state, personality, vel, pos, appearance)) in world
+        .query_mut::<(&mut CatState, &Personality, &mut Velocity, &Position, &Appearance)>()
     {
+        let speed_mult = size_speed_mult(appearance.size);
         state.timer -= dt;
 
         // Per-state tick behavior
@@ -31,7 +39,7 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
                 let interval = 0.4;
                 if (prev / interval).floor() != (state.timer / interval).floor() {
                     let angle = rng.f32() * std::f32::consts::TAU;
-                    let speed = ZOOMIES_SPEED * (0.8 + rng.f32() * 0.4);
+                    let speed = ZOOMIES_SPEED * (0.8 + rng.f32() * 0.4) * speed_mult;
                     vel.0 = Vec2::new(angle.cos(), angle.sin()) * speed;
                 }
             }
@@ -74,7 +82,7 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
                     state.timer = 0.5 + rng.f32() * 1.0;
                     // Keep current velocity direction but normalize to run speed
                     let dir = vel.0.normalize_or_zero();
-                    vel.0 = dir * RUN_SPEED;
+                    vel.0 = dir * RUN_SPEED * speed_mult;
                     continue;
                 }
                 BehaviorState::Yawning => {
@@ -100,7 +108,7 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
             }
 
             // Normal transition to a new state
-            transition(state, personality, vel, pos, rng);
+            transition(state, personality, vel, pos, appearance, rng, energy_scale);
         }
     }
 }
@@ -111,27 +119,37 @@ fn transition(
     personality: &Personality,
     vel: &mut Velocity,
     _pos: &Position,
+    appearance: &Appearance,
     rng: &mut fastrand::Rng,
+    energy_scale: f32,
 ) {
+    let speed_mult = size_speed_mult(appearance.size);
+    // Size-based laziness boost: big cats are lazier, small cats are more energetic
+    let size_lazy = ((appearance.size - 1.0) * 0.5).clamp(-0.15, 0.15);
+
     // Check for zoomies first (rare, energy-weighted)
-    let zoomies_chance = ZOOMIES_CHANCE * personality.energy;
+    // Small cats get zoomies more often, big cats less. Night = fewer zoomies.
+    let zoomies_chance = ZOOMIES_CHANCE * personality.energy * speed_mult * energy_scale;
     if rng.f32() < zoomies_chance {
         state.state = BehaviorState::Zoomies;
         state.timer = 1.0 + rng.f32() * 1.0; // 1-2s
         let angle = rng.f32() * std::f32::consts::TAU;
-        vel.0 = Vec2::new(angle.cos(), angle.sin()) * ZOOMIES_SPEED;
+        vel.0 = Vec2::new(angle.cos(), angle.sin()) * ZOOMIES_SPEED * speed_mult;
         return;
     }
 
-    // Weighted random state selection based on personality
+    // Weighted random state selection based on personality + size
     let roll = rng.f32();
 
-    // Lazier cats idle/sleep more, energetic cats walk/run more
-    let idle_weight = 0.25 + personality.laziness * 0.2;
-    let sleep_weight = 0.15 + personality.laziness * 0.15;
+    // Lazier/bigger cats idle/sleep more, energetic/smaller cats walk/run more
+    // energy_scale modulates from mode + day/night: <1 = sleepier, >1 = more active
+    let eff_laziness = (personality.laziness + size_lazy + (1.0 - energy_scale) * 0.2).clamp(0.0, 1.0);
+    let eff_energy = ((personality.energy - size_lazy) * energy_scale).clamp(0.0, 1.0);
+    let idle_weight = 0.25 + eff_laziness * 0.2;
+    let sleep_weight = 0.15 + eff_laziness * 0.15;
     let groom_weight = 0.1;
-    let walk_weight = 0.25 + personality.energy * 0.15;
-    let run_weight = 0.1 + personality.energy * 0.1;
+    let walk_weight = 0.25 + eff_energy * 0.15;
+    let run_weight = 0.1 + eff_energy * 0.1;
 
     let total = idle_weight + sleep_weight + groom_weight + walk_weight + run_weight;
     let r = roll * total;
@@ -163,18 +181,18 @@ fn transition(
     if r < acc {
         state.state = BehaviorState::Walking;
         state.timer = 2.0 + rng.f32() * 4.0;
-        // Pick a random walk direction
+        // Pick a random walk direction — small cats walk faster
         let angle = rng.f32() * std::f32::consts::TAU;
-        let speed = WALK_SPEED * (0.5 + personality.energy * 0.5);
+        let speed = WALK_SPEED * (0.5 + personality.energy * 0.5) * speed_mult;
         vel.0 = Vec2::new(angle.cos(), angle.sin()) * speed;
         return;
     }
 
-    // Run
+    // Run — small cats sprint faster, big cats lumber
     state.state = BehaviorState::Running;
     state.timer = 0.8 + rng.f32() * 1.5;
     let angle = rng.f32() * std::f32::consts::TAU;
-    let speed = RUN_SPEED * (0.5 + personality.energy * 0.5);
+    let speed = RUN_SPEED * (0.5 + personality.energy * 0.5) * speed_mult;
     vel.0 = Vec2::new(angle.cos(), angle.sin()) * speed;
 }
 

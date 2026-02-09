@@ -1,6 +1,7 @@
 mod app;
 mod cat;
 mod click;
+mod daynight;
 mod debug;
 mod ecs;
 mod heatmap;
@@ -9,7 +10,7 @@ mod platform;
 mod render;
 mod spatial;
 mod toy;
-mod util;
+
 
 fn main() {
     env_logger::init();

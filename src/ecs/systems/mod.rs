@@ -29,6 +29,7 @@ pub fn tick(
     heatmap: &Heatmap,
     edge_affinity: f32,
     platforms: &[window_aware::DesktopWindow],
+    energy_scale: f32,
 ) {
     // 0. Update cursor tracking
     cursor.update(mouse_x, mouse_y, dt);
@@ -40,7 +41,7 @@ pub fn tick(
 
     // 2. Behavior state machine transitions
     timers.begin();
-    behavior::update(world, dt, rng);
+    behavior::update(world, dt, rng, energy_scale);
     timers.end(SystemPhase::Behavior);
 
     // 3. Movement integration (apply velocity, friction, bounds, heatmap avoidance, edge affinity)

@@ -46,6 +46,7 @@ pub struct DebugOverlay {
     /// UI controls.
     pub paused: bool,
     pub target_cat_count: usize,
+    pub cat_count_changed: bool,
     pub present_mode_index: usize,
     pub present_mode_changed: bool,
 
@@ -122,7 +123,8 @@ impl DebugOverlay {
             frame_time_max: 0.0,
             system_timers: SystemTimers::new(),
             paused: false,
-            target_cat_count: 20,
+            target_cat_count: 1000,
+            cat_count_changed: false,
             present_mode_index: 0, // Mailbox
             present_mode_changed: false,
             entity_count: 0,
@@ -292,6 +294,9 @@ impl DebugOverlay {
 
         // Write back mutable controls.
         self.paused = paused;
+        if target_cat_count != self.target_cat_count {
+            self.cat_count_changed = true;
+        }
         self.target_cat_count = target_cat_count;
         if present_mode_index != self.present_mode_index {
             self.present_mode_changed = true;

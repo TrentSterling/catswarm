@@ -12,6 +12,7 @@ use crate::debug::timer::{SystemPhase, SystemTimers};
 use crate::debug::DebugOverlay;
 use crate::ecs::components::{
     Appearance, BehaviorState, CatName, CatState, Personality, Position, PrevPosition,
+    SleepingPile,
 };
 use crate::ecs::systems;
 use crate::ecs::systems::interaction::InteractionBuffers;
@@ -24,6 +25,7 @@ use crate::render::instance::CatInstance;
 use crate::render::trail::TrailSystem;
 use crate::render::GpuState;
 use crate::spatial::{CatSnapshot, SpatialHash};
+use crate::daynight::DayNightState;
 use crate::toy::YarnBall;
 
 /// Target simulation tick rate (seconds per tick).
@@ -83,6 +85,9 @@ struct App {
     // Toy
     yarn_ball: YarnBall,
 
+    // Day/night cycle
+    daynight: DayNightState,
+
     // Window platforms (periodically refreshed)
     desktop_windows: Vec<DesktopWindow>,
     window_refresh_timer: f64,
@@ -123,6 +128,7 @@ impl App {
             trail_system: TrailSystem::new(),
             heatmap: Heatmap::new(1.0, 1.0),
             yarn_ball: YarnBall::new(),
+            daynight: DayNightState::new(),
             desktop_windows: Vec::new(),
             window_refresh_timer: 0.0,
             rng: fastrand::Rng::new(),
@@ -175,6 +181,9 @@ impl App {
             None => return,
         };
 
+        // Effective energy scale: mode preset * day/night modifier
+        let energy_scale = self.mode_state.behavior_energy_scale * self.daynight.energy_modifier;
+
         while self.accumulator >= TICK_RATE {
             systems::tick(
                 &mut self.world,
@@ -192,6 +201,7 @@ impl App {
                 &self.heatmap,
                 self.mode_state.edge_affinity,
                 &self.desktop_windows,
+                energy_scale,
             );
 
             // Click interactions (startle, treats, laser, yarn ball)
@@ -218,14 +228,25 @@ impl App {
         timers.begin();
         self.instance_buf.clear();
         let alpha = self.interpolation_alpha();
+        let time = self.elapsed_time as f32;
 
-        for (_, (pos, prev_pos, appearance, cat_state)) in self
+        for (_, (pos, prev_pos, appearance, cat_state, pile)) in self
             .world
-            .query::<(&Position, &PrevPosition, &Appearance, &CatState)>()
+            .query::<(&Position, &PrevPosition, &Appearance, &CatState, Option<&SleepingPile>)>()
             .iter()
         {
-            self.instance_buf
-                .push(CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha));
+            let mut inst = CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha);
+
+            // Breathing animation for sleeping pile members
+            if let Some(pile) = pile {
+                let breath = (time * 2.0 + pile.breathing_offset).sin() * 0.04;
+                inst.size *= 1.0 + breath;
+            }
+
+            // Day/night color tint
+            inst.color = apply_tint(inst.color, self.daynight.tint);
+
+            self.instance_buf.push(inst);
         }
         // Add yarn ball as a visible instance (red ball)
         if self.yarn_ball.active {
@@ -345,6 +366,16 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Skip everything while minimized — prevents cats from getting
+        // clamped to tiny dimensions and flinging apart on restore.
+        if let Some(window) = &self.window {
+            if window.is_minimized() == Some(true) {
+                // Reset frame timer so we don't accumulate a huge dt
+                self.last_frame_time = None;
+                return;
+            }
+        }
+
         // Poll ESC key (window is click-through so can't receive keyboard events)
         #[cfg(windows)]
         if platform::win32::is_escape_pressed() {
@@ -426,6 +457,9 @@ impl ApplicationHandler for App {
             }
         }
 
+        // Update day/night cycle from system clock
+        self.daynight.update();
+
         // Sync debug mode display + visual toggles
         if let Some(debug) = &mut self.debug {
             debug.current_mode = self.mode_state.mode;
@@ -497,14 +531,28 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                if let Some(gpu) = &mut self.gpu {
-                    gpu.resize(new_size.width, new_size.height);
-                    self.screen_w = new_size.width;
-                    self.screen_h = new_size.height;
-                    self.heatmap.resize(new_size.width as f32, new_size.height as f32);
+                // Ignore tiny resizes (happens during minimize animation) —
+                // prevents cats from getting clamped to a tiny area.
+                // A real desktop window is always larger than 200x200.
+                if new_size.width >= 200 && new_size.height >= 200 {
+                    if let Some(gpu) = &mut self.gpu {
+                        gpu.resize(new_size.width, new_size.height);
+                        self.screen_w = new_size.width;
+                        self.screen_h = new_size.height;
+                        self.heatmap.resize(new_size.width as f32, new_size.height as f32);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
+                // Skip everything while minimized — simulation would run
+                // with stale (tiny) dimensions, crushing cats to a corner.
+                if let Some(window) = &self.window {
+                    if window.is_minimized() == Some(true) {
+                        self.last_frame_time = None;
+                        return;
+                    }
+                }
+
                 // --- Timing ---
                 let now = Instant::now();
                 if let Some(last) = self.last_frame_time {
@@ -543,12 +591,17 @@ impl ApplicationHandler for App {
                 }
                 self.last_frame_time = Some(now);
 
-                // Sync cat count if slider changed (overrides natural growth)
-                if let Some(debug) = &self.debug {
-                    let target = debug.target_cat_count;
-                    if target != self.world.len() as usize {
-                        self.sync_cat_count(target);
+                // Sync cat count only when slider is explicitly changed
+                let slider_target = self.debug.as_mut().and_then(|d| {
+                    if d.cat_count_changed {
+                        d.cat_count_changed = false;
+                        Some(d.target_cat_count)
+                    } else {
+                        None
                     }
+                });
+                if let Some(target) = slider_target {
+                    self.sync_cat_count(target);
                 }
 
                 // Handle present mode change
@@ -575,6 +628,11 @@ impl ApplicationHandler for App {
                 if let Some(debug) = &mut self.debug {
                     debug.entity_count = self.world.len() as usize;
                     debug.tick_count = self.tick_count;
+                    // Keep slider in sync with actual population
+                    // (only when user isn't actively changing it)
+                    if !debug.cat_count_changed {
+                        debug.target_cat_count = self.world.len() as usize;
+                    }
                 }
 
                 // --- Build instance buffer from ECS (timed) ---
@@ -731,6 +789,18 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
+}
+
+/// Apply a color tint to a packed RGBA u32 color.
+fn apply_tint(color: u32, tint: [f32; 3]) -> u32 {
+    let r = ((color >> 24) & 0xFF) as f32;
+    let g = ((color >> 16) & 0xFF) as f32;
+    let b = ((color >> 8) & 0xFF) as f32;
+    let a = color & 0xFF;
+    let tr = (r * tint[0]).min(255.0) as u32;
+    let tg = (g * tint[1]).min(255.0) as u32;
+    let tb = (b * tint[2]).min(255.0) as u32;
+    (tr << 24) | (tg << 16) | (tb << 8) | a
 }
 
 /// Map behavior state to a mood color (r, g, b) for trail rendering.

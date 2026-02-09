@@ -9,27 +9,27 @@
 
 ## Low-Hanging Fruit (Stubbed / Partially Built)
 
-### [~] Window Awareness (Milestone 6)
-Cats interact with real desktop windows — walk along titlebars, sit on edges, peek over browser tabs, dangle tails off corners. `enumerate_windows()` and `WindowRect` already exist in `win32.rs`. Needs: periodic window enumeration, collision/platform detection in movement system, perching behavior state.
+### [x] Window Awareness (Milestone 6)
+Cats interact with real desktop windows — walk along titlebars, sit on edges. Periodic window enumeration every 2s, platform detection, perching behavior with snap-to-titlebar.
 
-### [ ] Parade Detection
-3+ cats walking in similar direction within 100px form a conga line. Leader keeps direction, followers steer to maintain ~40px spacing behind the cat in front. Constants (`PARADE_MIN_CATS`, `PARADE_RADIUS`, etc.) already defined in `interaction.rs`. Needs: detection in phase_read, steering in phase_write, new `Parading` behavior state.
+### [x] Parade Detection
+3+ cats walking in similar direction within 100px form a conga line. Follow-the-leader spacing: followers steer to maintain ~40px behind the cat ahead. Leader keeps direction, followers blend.
 
-### [ ] Heatmap Avoidance
-Cats organically avoid areas where you work. `Heatmap::sample()` exists but isn't called from the movement system. Needs: sample heatmap at candidate movement direction, bias away from hot zones (>0.3 intensity). Creates natural "I work here" clear zones.
+### [x] Heatmap Avoidance
+Cats organically avoid areas where you work. Gradient sampling pushes away from hot zones (>0.3 intensity). Creates natural "I work here" clear zones.
 
-### [ ] Edge Affinity (Work Mode)
-In Work mode, cats bias their walking direction toward screen edges, clearing the center. `ModeState::edge_affinity` is computed but not applied in `movement.rs`. Needs: blend walking direction toward nearest edge by `edge_affinity` factor when picking new direction.
+### [x] Edge Affinity (Work Mode)
+In Work mode, cats bias walking direction toward screen edges, clearing the center.
 
 ---
 
 ## Interaction & Gameplay
 
-### [ ] Cat Names & Tooltips
-Each cat gets a procedurally generated name (e.g., "Professor Whiskers", "Captain Fluffbutt", "Mochi", "Sir Naps-a-Lot"). Hovering over a cat shows a floating tooltip with name, personality radar, current mood/behavior, and age. Needs: name generation on spawn, hit-testing cursor against cat positions, egui tooltip or custom text rendering.
+### [x] Cat Names & Tooltips
+Each cat gets a procedurally generated name (e.g., "Professor Whiskers"). Hovering over a cat shows a floating tooltip with name, personality %, current mood. Hit-testing cursor against cat positions, egui tooltip.
 
-### [ ] Toys — Yarn Ball
-A draggable yarn ball that bounces around the screen. Cats within range chase it, bat at it (applying impulse). Physics: simple velocity + gravity + bounce off screen edges. Right-click to spawn, left-click-drag to throw. Leaves a yarn trail behind it.
+### [x] Toys — Yarn Ball
+Middle-click spawns/throws a yarn ball. Cats within 250px chase it, bat at it (applying impulse). Physics: velocity + friction + bounce off screen edges.
 
 ### [ ] Toys — Feather Wand
 A feather that dangles from the cursor on a "string" (simple pendulum physics). Cats jump at it when it swings low. The feather bobs and sways with cursor movement. More engaging than plain cursor chase.
@@ -50,20 +50,20 @@ Cats claim screen regions based on where they spend time. Territorial cats (low 
 ### [ ] Animated Sprite Frames
 Replace static SDF poses with multi-frame animations: walking legs cycle, tail swishes while idle, eyes blink randomly, ears twitch. Could remain SDF-based (parameterize limb positions) or switch to sprite atlas.
 
-### [ ] Size Variation
-Kittens (0.6x), normal (1.0x), chonkers (1.4x). Size affects speed (inverse), laziness (proportional), and visual presence. Chonkers are slower but have stronger separation force. Kittens dart around.
+### [x] Size Variation
+Kittens (0.6x) are fast and energetic, chonkers (1.4x) are slow and lazy. Size affects speed (0.7x-1.3x), behavior weights (laziness/energy shift), separation force, and zoomies chance.
 
-### [ ] Sleeping Piles
-When 3+ cats sleep within 20px of each other, they visually merge into a "pile" — overlapping silhouettes, gentle breathing animation (scale oscillation), zzz particles. Disturbing one wakes them all (startled cascade).
+### [x] Sleeping Piles
+3+ cats sleeping within 40px form a pile with breathing animation (±4% size oscillation). Disturbing one wakes them all (gentle startle cascade within 80px).
 
-### [ ] Day/Night Cycle
-Tint overlay based on system clock. Dawn (6-8am): cats wake up, stretch, increased energy. Day: normal. Dusk (6-8pm): yawning increases, sleep clusters form. Night (10pm-6am): most cats sleeping, occasional nocturnal zoomies. Subtle warm/cool color shift on cat colors.
+### [x] Day/Night Cycle
+System clock drives ambient tint (golden dawn, neutral day, orange dusk, blue night) and behavior energy modifier (0.4x at night, 1.0x during day). Smooth transitions via smoothstep interpolation.
 
 ### [ ] Emotion Particles
 Tiny floating symbols above cats: hearts (playing), zzz (sleeping), ! (startled), ~ (grooming), stars (zoomies), ? (confused/looking for laser). Rendered as simple SDF shapes in the cat shader or as a separate particle pass.
 
-### [ ] Trail Color by Mood
-Trail color reflects behavior: white (idle), green (walking), blue (sleeping/grooming), red (zoomies/running), pink (playing/chasing), yellow (startled). Creates a mood map of recent activity.
+### [x] Trail Color by Mood
+Trail color reflects behavior: gray (idle), green (walking), blue (sleeping/grooming), bright red (zoomies), pink (chasing), yellow (startled). Per-point color in ring buffer.
 
 ---
 

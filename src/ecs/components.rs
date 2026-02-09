@@ -69,3 +69,10 @@ pub struct SpatialCell(pub u32);
 /// Marks a cat that is interacting with another cat (ChasingCat or Playing).
 #[derive(Debug, Clone, Copy)]
 pub struct InteractionTarget(pub hecs::Entity);
+
+/// Marks a cat as part of a sleeping pile (3+ nearby sleeping cats).
+/// Includes a phase offset for breathing animation variety.
+#[derive(Debug, Clone, Copy)]
+pub struct SleepingPile {
+    pub breathing_offset: f32,
+}

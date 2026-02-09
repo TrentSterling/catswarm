@@ -1,5 +1,76 @@
 # PetToy — Session Resume (2026-02-09)
 
+## Overnight Edits (Not Yet Compiled)
+The following changes were made as source edits only — **not compiled or tested yet**.
+
+### Dead Code Cleanup
+- Removed unused `src/util/pool.rs`, `src/util/mod.rs` (Pool struct never used)
+- Removed unused `src/cat/animation.rs`, `src/cat/personality.rs` (stubs, never imported)
+- Removed unused `glam::Vec2` import in `window_aware.rs`
+- Removed unused `PARADE_FOLLOW_DIST` constant (later re-added when follow-the-leader was implemented)
+
+### Sleeping Pile Detection
+- **`components.rs`**: Added `SleepingPile { breathing_offset: f32 }` component
+- **`interaction.rs`**: Added `sleeping_neighbor_count` buffer, pile detection in phase_read (40px radius, 3+ cats), pile management in new `phase_sleeping_piles` function
+- **Wake cascade**: When a pile member is disturbed (state changes from Sleeping), all sleeping cats within 80px get gently startled
+- **`app.rs`**: Breathing animation for pile members (±4% size oscillation via `sin(time * 2 + offset)`)
+
+### Size-Based Behavior Variation
+- **`behavior.rs`**: Added `size_speed_mult()` — kittens (0.6) move at 1.3x speed, chonkers (1.4) at 0.7x
+- **`behavior.rs`**: Transition weights modulated by size (big cats lazier, small cats more energetic, zoomies chance scaled)
+- **`spatial/mod.rs`**: Added `size: f32` to `CatSnapshot`
+- **`spatial.rs`**: Snapshot rebuild now includes `Appearance.size`
+- **`interaction.rs`**: Separation force scaled by neighbor's size (bigger cats push harder)
+
+### Parade Follow-the-Leader Improvement
+- **`interaction.rs`**: Added `parade_follow_pos` and `parade_follow_dist_sq` buffers
+- Followers now steer toward a point 40px behind the nearest aligned cat ahead of them
+- Leaders (no one ahead) maintain parade direction as before
+- Creates visible conga-line spacing instead of just velocity alignment
+
+### Day/Night Cycle
+- **`daynight.rs`** (NEW): `DayNightState` with hour, tint, and energy modifier
+- Tint: warm golden dawn, neutral day, orange dusk, blue-purple evening, cool blue night
+- Energy modifier: 0.4x at night, 0.8x dawn/evening, 1.0x during day
+- Uses `GetLocalTime` Win32 API for accurate local time
+- **`win32.rs`**: Added `get_local_hour()` function
+- **`behavior.rs`**: Now accepts `energy_scale` parameter (mode preset × day/night modifier)
+- **`app.rs`**: `apply_tint()` function modifies instance colors, energy_scale passed to tick
+
+### Wiring Changes
+- **`systems/mod.rs`**: `tick()` now takes `energy_scale: f32` parameter
+- **`behavior.rs`**: `update()` and `transition()` accept and use `energy_scale`
+- **`main.rs`**: Added `mod daynight;`, removed `mod util;`
+
+### Files Modified (Overnight)
+| File | Changes |
+|------|---------|
+| `src/main.rs` | Added daynight module, removed util module |
+| `src/app.rs` | DayNightState, tint in instances, breathing animation, energy_scale |
+| `src/daynight.rs` | **NEW** — day/night cycle system |
+| `src/ecs/components.rs` | Added SleepingPile component |
+| `src/ecs/systems/mod.rs` | Added energy_scale param to tick() |
+| `src/ecs/systems/behavior.rs` | Size speed mult, energy_scale, Appearance query |
+| `src/ecs/systems/interaction.rs` | Sleeping piles, size separation, follow-the-leader parade |
+| `src/ecs/systems/spatial.rs` | Size in snapshot, Appearance in query |
+| `src/ecs/systems/window_aware.rs` | Removed unused Vec2 import |
+| `src/spatial/mod.rs` | Added size field to CatSnapshot |
+| `src/platform/win32.rs` | Added get_local_hour() |
+| Deleted: `src/util/*`, `src/cat/animation.rs`, `src/cat/personality.rs` | Dead code removed |
+
+### To Build & Test
+```bash
+cargo build   # will compile all overnight changes
+cargo run     # launch and verify visually
+```
+Expected: no errors (all changes are consistent), cats should show:
+- Day/night tint based on current time
+- Sleeping pile breathing when 3+ cats cluster while sleeping
+- Size-varied speeds (small cats zip, big cats lumber)
+- Follow-the-leader parade spacing
+
+---
+
 ## What Was Done This Session
 
 ### v0.2.0 Desktop Companion Overhaul (5 Batches — COMPLETE)
