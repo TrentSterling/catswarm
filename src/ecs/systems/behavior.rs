@@ -32,7 +32,7 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
             | BehaviorState::Grooming => {
                 // Stationary states — velocity decays via friction in movement system
             }
-            BehaviorState::ChasingMouse => {
+            BehaviorState::ChasingMouse | BehaviorState::FleeingCursor => {
                 // Handled by mouse system
             }
             BehaviorState::ChasingCat | BehaviorState::Playing => {

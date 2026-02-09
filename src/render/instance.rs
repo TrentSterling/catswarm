@@ -38,6 +38,7 @@ impl CatInstance {
             BehaviorState::Walking
             | BehaviorState::Running
             | BehaviorState::ChasingMouse
+            | BehaviorState::FleeingCursor
             | BehaviorState::ChasingCat => 1,
             _ => 0, // Idle, Grooming, Playing
         };

@@ -29,6 +29,7 @@ pub enum BehaviorState {
     Sleeping,
     Grooming,
     ChasingMouse,
+    FleeingCursor,
     ChasingCat,
     Playing,
 }
