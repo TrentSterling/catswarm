@@ -27,7 +27,7 @@ use crate::render::GpuState;
 use crate::spatial::{CatSnapshot, SpatialHash};
 use crate::daynight::DayNightState;
 use crate::particles::ParticleSystem;
-use crate::toy::YarnBall;
+use crate::toy::YarnBalls;
 
 /// Target simulation tick rate (seconds per tick).
 const TICK_RATE: f64 = 1.0 / 60.0;
@@ -83,8 +83,8 @@ struct App {
     trail_system: TrailSystem,
     heatmap: Heatmap,
 
-    // Toy
-    yarn_ball: YarnBall,
+    // Toys
+    yarn_balls: YarnBalls,
 
     // Emotion particles
     particles: ParticleSystem,
@@ -131,7 +131,7 @@ impl App {
             click_state: ClickState::new(),
             trail_system: TrailSystem::new(),
             heatmap: Heatmap::new(1.0, 1.0),
-            yarn_ball: YarnBall::new(),
+            yarn_balls: YarnBalls::new(),
             particles: ParticleSystem::new(),
             daynight: DayNightState::new(),
             desktop_windows: Vec::new(),
@@ -176,9 +176,10 @@ impl App {
             dt as f32,
         );
 
-        // Update yarn ball physics
-        self.yarn_ball
-            .update(dt as f32, self.screen_w as f32, self.screen_h as f32);
+        // Update yarn ball physics (mouse pushes them when hovering near)
+        let mouse_vec = glam::Vec2::new(mouse_x, mouse_y);
+        self.yarn_balls
+            .update(dt as f32, self.screen_w as f32, self.screen_h as f32, mouse_vec);
 
         // Borrow timers from debug overlay (or use a throwaway).
         let timers = match &mut self.debug {
@@ -215,11 +216,32 @@ impl App {
                 &self.click_state,
                 glam::Vec2::new(mouse_x, mouse_y),
                 &mut self.rng,
-                &mut self.yarn_ball,
+                &mut self.yarn_balls,
             );
 
-            // Advance spawn drop-in animations
-            update_spawn_animations(&mut self.world, TICK_RATE as f32);
+            // Advance spawn drop-in animations — collect bounce impacts for dust
+            let bounces = update_spawn_animations(&mut self.world, TICK_RATE as f32);
+            if self.particles.enabled {
+                for bounce in &bounces {
+                    // Dust poof: more particles for harder impacts
+                    let count = (3.0 + bounce.intensity * 8.0) as usize;
+                    self.particles.spawn_dust(bounce.pos, count, bounce.intensity, &mut self.rng);
+                }
+            }
+
+            // Click feedback particles
+            if self.particles.enabled {
+                let mouse = glam::Vec2::new(mouse_x, mouse_y);
+                if self.click_state.left_clicked {
+                    self.particles.spawn_burst(mouse, 8, 0xFFFF66EE, 5, &mut self.rng);
+                }
+                if self.click_state.right_clicked {
+                    self.particles.spawn_burst(mouse, 6, 0xDD3333DD, 3, &mut self.rng);
+                }
+                if self.click_state.double_clicked {
+                    self.particles.spawn_burst(mouse, 12, 0xFF0000FF, 5, &mut self.rng);
+                }
+            }
 
             // Emotion particles: gather cat states, spawn particles, update physics
             if self.particles.enabled {
@@ -302,13 +324,30 @@ impl App {
 
             self.instance_buf.push(inst);
         }
-        // Add yarn ball as a visible circle
-        if self.yarn_ball.active {
+        // Render yarn balls
+        for ball in &self.yarn_balls.balls {
+            let fade = (ball.lifetime / 5.0).clamp(0.0, 1.0); // fade in last 5s
+            let alpha = (fade * 255.0) as u32;
             self.instance_buf.push(CatInstance {
-                position: self.yarn_ball.pos.into(),
-                size: 0.8,
-                color: 0xDD3333FF, // red yarn ball
-                frame: 3,          // circle SDF
+                position: ball.pos.into(),
+                size: 1.0,
+                color: (0xDD << 24) | (0x33 << 16) | (0x33 << 8) | alpha,
+                frame: 3, // circle SDF
+                rotation: 0.0,
+            });
+        }
+
+        // Render treats as golden star shapes
+        for treat in &self.click_state.treats {
+            let fade = (treat.timer / 10.0).clamp(0.0, 1.0);
+            let alpha = (fade * 200.0 + 55.0) as u32;
+            // Pulsing size for visibility
+            let pulse = (time * 3.0 + treat.pos.x * 0.01).sin() * 0.1 + 1.0;
+            self.instance_buf.push(CatInstance {
+                position: treat.pos.into(),
+                size: 0.7 * pulse,
+                color: (0xFF << 24) | (0xCC << 16) | (0x33 << 8) | alpha, // bright gold
+                frame: 5,
                 rotation: 0.0,
             });
         }
@@ -479,19 +518,6 @@ impl ApplicationHandler for App {
             let f11_down = platform::win32::is_f11_pressed();
             if self.mode_state.poll_f11(f11_down) {
                 log::info!("Mode changed to: {}", self.mode_state.mode.label());
-            }
-        }
-
-        // Poll Y key for yarn ball (alternative to middle-click)
-        #[cfg(windows)]
-        if platform::win32::is_y_pressed() {
-            let (mx, my) = platform::win32::get_mouse_pos();
-            let mouse_pos = glam::Vec2::new(mx, my);
-            if self.yarn_ball.active {
-                let dir = (mouse_pos - self.yarn_ball.pos).normalize_or_zero();
-                self.yarn_ball.throw(dir * 300.0);
-            } else {
-                self.yarn_ball.spawn(mouse_pos);
             }
         }
 
@@ -919,11 +945,18 @@ const MAX_BOUNCES: u8 = 3;
 /// If velocity is below this after a bounce, stop early.
 const BOUNCE_VEL_THRESHOLD: f32 = 30.0;
 
+/// A bounce impact event — position + intensity for dust particles.
+struct BounceEvent {
+    pos: glam::Vec2,
+    intensity: f32, // 0.0–1.0, higher = bigger impact
+}
+
 /// Advance spawn drop-in animations with real physics.
 /// Gravity accelerates cats downward. On impact at target_y, velocity reverses
-/// with damping for a natural bounce. Removes SpawnAnimation when settled.
-fn update_spawn_animations(world: &mut hecs::World, dt: f32) {
+/// with damping for a natural bounce. Returns bounce events for particle effects.
+fn update_spawn_animations(world: &mut hecs::World, dt: f32) -> Vec<BounceEvent> {
     let mut done = Vec::new();
+    let mut bounces = Vec::new();
 
     for (entity, (pos, prev_pos, anim)) in
         world.query_mut::<(&mut Position, &mut PrevPosition, &mut SpawnAnimation)>()
@@ -935,12 +968,24 @@ fn update_spawn_animations(world: &mut hecs::World, dt: f32) {
 
         // Ground collision detection
         if pos.0.y >= anim.target_y {
+            // Record bounce intensity from impact velocity (before damping)
+            let impact_vel = anim.vel_y.abs();
+            let intensity = (impact_vel / 800.0).clamp(0.0, 1.0);
+
             pos.0.y = anim.target_y;
             anim.has_landed = true;
             anim.bounce_count += 1;
 
             // Reverse velocity with damping
             anim.vel_y = -anim.vel_y.abs() * BOUNCE_DAMPING;
+
+            // Emit bounce event for dust particles
+            if intensity > 0.05 {
+                bounces.push(BounceEvent {
+                    pos: glam::Vec2::new(pos.0.x, anim.target_y),
+                    intensity,
+                });
+            }
 
             // Check if animation is done (enough bounces or too little energy)
             if anim.bounce_count >= MAX_BOUNCES || anim.vel_y.abs() < BOUNCE_VEL_THRESHOLD {
@@ -954,6 +999,8 @@ fn update_spawn_animations(world: &mut hecs::World, dt: f32) {
     for entity in done {
         let _ = world.remove_one::<SpawnAnimation>(entity);
     }
+
+    bounces
 }
 
 /// Entry point — create event loop and run.

@@ -1,9 +1,10 @@
 use glam::Vec2;
 
-/// A treat placed by right-clicking — attracts nearby cats.
+/// A treat placed by middle-clicking — attracts nearby cats.
 #[derive(Debug, Clone, Copy)]
 pub struct Treat {
     pub pos: Vec2,
+    pub vel: Vec2,
     pub timer: f32,
 }
 
@@ -82,27 +83,38 @@ impl ClickState {
         }
         self.left_was_down = left_down;
 
-        // Edge-detect right click
+        // Edge-detect right click (yarn ball spawn/throw)
         if right_down && !self.right_was_down {
             self.right_clicked = true;
+        }
+        self.right_was_down = right_down;
+
+        // Edge-detect middle click (treat)
+        if middle_down && !self.middle_was_down {
+            self.middle_clicked = true;
             // Spawn a treat
             if self.treats.len() < MAX_TREATS {
                 self.treats.push(Treat {
                     pos: mouse_pos,
+                    vel: Vec2::ZERO,
                     timer: TREAT_LIFETIME,
                 });
             }
         }
-        self.right_was_down = right_down;
-
-        // Edge-detect middle click (yarn ball)
-        if middle_down && !self.middle_was_down {
-            self.middle_clicked = true;
-        }
         self.middle_was_down = middle_down;
 
-        // Update treat timers
+        // Update treat physics: cursor push, friction, timers
         for treat in &mut self.treats {
+            // Mouse pushes treats
+            let to_treat = treat.pos - mouse_pos;
+            let dist = to_treat.length();
+            if dist < 80.0 && dist > 1.0 {
+                let push_dir = to_treat / dist;
+                let push_strength = (1.0 - dist / 80.0) * 300.0;
+                treat.vel += push_dir * push_strength * dt;
+            }
+            treat.pos += treat.vel * dt;
+            treat.vel *= 0.95; // friction
             treat.timer -= dt;
         }
         self.treats.retain(|t| t.timer > 0.0);
