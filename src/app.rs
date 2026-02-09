@@ -13,6 +13,7 @@ use crate::ecs::components::{Appearance, CatState, Position, PrevPosition};
 use crate::ecs::systems;
 use crate::ecs::systems::interaction::InteractionBuffers;
 use crate::ecs::systems::mouse::CursorState;
+use crate::mode::{AtkAction, ModeState};
 use crate::platform;
 use crate::render::instance::CatInstance;
 use crate::render::GpuState;
@@ -56,6 +57,9 @@ struct App {
     // Cursor tracking (speed, still timer)
     cursor_state: CursorState,
 
+    // Mode system (Work/Play/Zen/Chaos + AFK escalation)
+    mode_state: ModeState,
+
     // RNG (shared, deterministic per session)
     rng: fastrand::Rng,
 
@@ -83,6 +87,7 @@ impl App {
             snapshots: Vec::with_capacity(INITIAL_CAT_COUNT),
             interaction_bufs: InteractionBuffers::new(INITIAL_CAT_COUNT),
             cursor_state: CursorState::new(),
+            mode_state: ModeState::new(),
             rng: fastrand::Rng::new(),
             last_frame_time: None,
             accumulator: 0.0,
@@ -271,12 +276,54 @@ impl ApplicationHandler for App {
             let f12_down = platform::win32::is_f12_pressed();
             if let (Some(debug), Some(window)) = (&mut self.debug, &self.window) {
                 if debug.poll_toggle(f12_down) {
-                    // When visible: enable click-through so user can interact with egui.
-                    // When hidden: restore click-through so clicks go to desktop.
                     let _ = window.set_cursor_hittest(debug.visible);
                     log::info!("Debug overlay: {}", if debug.visible { "shown" } else { "hidden" });
                 }
             }
+        }
+
+        // Poll F11 for mode cycle
+        #[cfg(windows)]
+        {
+            let f11_down = platform::win32::is_f11_pressed();
+            if self.mode_state.poll_f11(f11_down) {
+                log::info!("Mode changed to: {}", self.mode_state.mode.label());
+            }
+        }
+
+        // AFK escalation
+        #[cfg(windows)]
+        {
+            let idle_secs = platform::win32::get_idle_time();
+            let dt = self.last_frame_time
+                .map(|t| instant::Instant::now().duration_since(t).as_secs_f64())
+                .unwrap_or(0.016);
+            match self.mode_state.update_afk(idle_secs, dt) {
+                AtkAction::SpawnCats(n) => {
+                    cat::spawn_cats(
+                        &mut self.world,
+                        n,
+                        self.screen_w as f32,
+                        self.screen_h as f32,
+                    );
+                }
+                AtkAction::ScatterAndDespawn(n) => {
+                    log::info!("User returned — despawning {} bonus cats", n);
+                    self.sync_cat_count((self.world.len() as usize).saturating_sub(n));
+                }
+                AtkAction::Scatter => {
+                    log::info!("User returned — scattering cats");
+                }
+                AtkAction::None => {}
+            }
+        }
+
+        // Sync debug mode display
+        if let Some(debug) = &mut self.debug {
+            debug.current_mode = self.mode_state.mode;
+            debug.idle_seconds = self.mode_state.idle_seconds;
+            debug.edge_affinity = self.mode_state.edge_affinity;
+            debug.energy_scale = self.mode_state.behavior_energy_scale;
         }
 
         if let Some(w) = &self.window {
@@ -344,6 +391,18 @@ impl ApplicationHandler for App {
                     if debug.present_mode_changed {
                         debug.present_mode_changed = false;
                         gpu.set_present_mode(debug.selected_present_mode());
+                    }
+                }
+
+                // Handle app mode change from debug UI
+                if let Some(debug) = &mut self.debug {
+                    if debug.mode_changed {
+                        debug.mode_changed = false;
+                        let modes = crate::mode::ModeState::all_modes();
+                        if debug.selected_mode_index < modes.len() {
+                            self.mode_state.set_mode(modes[debug.selected_mode_index]);
+                            log::info!("Mode set from UI: {}", self.mode_state.mode.label());
+                        }
                     }
                 }
 

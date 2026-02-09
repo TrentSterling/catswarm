@@ -1,7 +1,7 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT, TRUE};
 use windows::Win32::Graphics::Dwm::DwmSetWindowAttribute;
-use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsWindowVisible,
     SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
@@ -116,6 +116,46 @@ pub fn get_mouse_pos() -> (f32, f32) {
 pub fn is_escape_pressed() -> bool {
     // VK_ESCAPE = 0x1B. High bit set = key is currently down.
     unsafe { GetAsyncKeyState(0x1B) & (0x8000u16 as i16) != 0 }
+}
+
+/// Check if F12 was pressed since last call.
+/// Uses low bit (transition) to detect single press, not held state.
+pub fn is_f12_pressed() -> bool {
+    // VK_F12 = 0x7B. Low bit = key was pressed since last call to GetAsyncKeyState.
+    unsafe { GetAsyncKeyState(0x7B) & 1 != 0 }
+}
+
+/// Check if F11 was pressed since last call (mode cycle hotkey).
+pub fn is_f11_pressed() -> bool {
+    // VK_F11 = 0x7A
+    unsafe { GetAsyncKeyState(0x7A) & 1 != 0 }
+}
+
+/// Get seconds since last user input (keyboard/mouse, system-wide).
+/// Uses GetLastInputInfo Win32 API — one cheap syscall.
+pub fn get_idle_time() -> f64 {
+    unsafe {
+        let mut info = LASTINPUTINFO {
+            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+            dwTime: 0,
+        };
+        if GetLastInputInfo(&mut info).as_bool() {
+            let tick_count = windows::Win32::System::SystemInformation::GetTickCount();
+            let elapsed_ms = tick_count.wrapping_sub(info.dwTime);
+            elapsed_ms as f64 / 1000.0
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Get mouse button states. Returns (left_down, right_down).
+pub fn get_mouse_buttons() -> (bool, bool) {
+    unsafe {
+        let left = GetAsyncKeyState(0x01) & (0x8000u16 as i16) != 0; // VK_LBUTTON
+        let right = GetAsyncKeyState(0x02) & (0x8000u16 as i16) != 0; // VK_RBUTTON
+        (left, right)
+    }
 }
 
 // ---------------------------------------------------------------------------
