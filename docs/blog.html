@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Building catswarm: 1000 GPU-rendered cats on your desktop</title>
+  <meta name="description" content="How I built a transparent desktop overlay that renders 1000 procedural cats in a single draw call using Rust, wgpu, and an ECS architecture.">
+  <meta property="og:title" content="Building catswarm: 1000 GPU-rendered cats on your desktop">
+  <meta property="og:description" content="Rust + wgpu + DirectComposition + one very patient wife.">
+  <meta property="og:image" content="https://trentsterling.github.io/catswarm/og-image.png">
+  <meta property="og:url" content="https://trentsterling.github.io/catswarm/blog.html">
+  <meta property="og:type" content="article">
+  <style>
+    :root {
+      --orange: #ff9932;
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --border: #1e1e2a;
+      --text: #d4d4d4;
+      --muted: #888;
+      --heading: #f0f0f0;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      line-height: 1.75;
+      font-size: 17px;
+    }
+    a { color: var(--orange); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+    /* --- Header --- */
+    header {
+      padding: 60px 0 40px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 48px;
+    }
+    .back {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-bottom: 24px;
+      display: block;
+    }
+    header h1 {
+      font-size: clamp(2rem, 5vw, 2.8rem);
+      font-weight: 800;
+      color: var(--heading);
+      letter-spacing: -1px;
+      line-height: 1.2;
+      margin-bottom: 16px;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .meta strong { color: var(--text); }
+
+    /* --- Article --- */
+    article h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 48px 0 16px;
+    }
+    article h3 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: var(--heading);
+      margin: 32px 0 12px;
+    }
+    article p {
+      margin-bottom: 16px;
+    }
+    article img {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    article code {
+      background: rgba(255,153,50,0.1);
+      color: var(--orange);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-family: 'Fira Code', 'Cascadia Code', monospace;
+    }
+    article pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 24px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-family: 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+    article pre code {
+      background: none;
+      padding: 0;
+      color: var(--text);
+    }
+    article ul, article ol {
+      margin: 0 0 16px 24px;
+    }
+    article li { margin-bottom: 6px; }
+    article blockquote {
+      border-left: 3px solid var(--orange);
+      padding: 12px 20px;
+      margin: 20px 0;
+      background: var(--surface);
+      border-radius: 0 8px 8px 0;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .highlight {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin: 24px 0;
+    }
+    .highlight strong { color: var(--orange); }
+
+    /* --- Footer --- */
+    footer {
+      margin-top: 64px;
+      padding: 32px 0 48px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    footer a { margin: 0 10px; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <a class="back" href="index.html">&larr; catswarm</a>
+    <h1>Building catswarm: 1000 GPU-rendered cats on your desktop</h1>
+    <div class="meta">
+      <strong>Trent Sterling</strong> &middot; February 9, 2026 &middot; 6 min read
+    </div>
+  </header>
+
+  <article>
+    <p>
+      My wife looked at my monitor and said "I want more cats." So I built a transparent desktop overlay
+      that renders 1000 procedural cats in a single draw call. They chase your mouse, play with each other,
+      form nap clusters, and maintain personal space. Here's how.
+    </p>
+
+    <img src="https://raw.githubusercontent.com/TrentSterling/catswarm/master/screenshot.jpg" alt="catswarm running on desktop">
+
+    <h2>The transparency problem</h2>
+
+    <p>
+      Making a transparent overlay on Windows is surprisingly gnarly. The typical approach -- <code>WS_EX_LAYERED</code>
+      with <code>UpdateLayeredWindow</code> -- gives you GDI-based alpha blending, which means no GPU acceleration and
+      no hope of rendering 1000 anything at 60 FPS.
+    </p>
+
+    <p>
+      The trick is <strong>DirectComposition</strong>. Instead of compositing through GDI, you tell wgpu to create
+      a DX12 swapchain via <code>DxgiFromVisual</code>, which plugs directly into the Desktop Window Manager's
+      composition tree. Combined with <code>PreMultiplied</code> alpha mode, you get true per-pixel transparency
+      with full GPU rendering.
+    </p>
+
+    <div class="highlight">
+      <p><strong>The recipe:</strong> No <code>WS_EX_LAYERED</code>. No <code>with_transparent(true)</code>.
+      Instead: <code>Dx12SwapchainKind::DxgiFromVisual</code> + <code>CompositeAlphaMode::PreMultiplied</code> +
+      <code>DwmExtendFrameIntoClientArea(-1)</code>. Clear to <code>(0,0,0,0)</code> each frame.</p>
+    </div>
+
+    <p>
+      I also had to disable DWM's NC rendering, border color, and corner rounding via <code>DwmSetWindowAttribute</code> --
+      without this, Windows draws a thin white border around the "invisible" window. The final piece:
+      <code>WS_EX_TOOLWINDOW</code> hides the window from the taskbar, and <code>set_cursor_hittest(false)</code> makes
+      it click-through.
+    </p>
+
+    <h2>One draw call for all cats</h2>
+
+    <p>
+      Every cat shares a single quad (4 vertices, 6 indices). The cats themselves are differentiated entirely by a
+      24-byte instance buffer: position, size, color, and animation frame. The GPU reads one instance per cat and the
+      fragment shader draws the appropriate SDF silhouette.
+    </p>
+
+    <pre><code>// Per-instance data: 24 bytes
+pub struct CatInstance {
+    pub position: [f32; 2],  // screen pixels
+    pub size: f32,           // scale multiplier
+    pub color: u32,          // RGBA packed
+    pub frame: u32,          // 0=sitting, 1=walking, 2=sleeping
+    pub _pad: u32,
+}</code></pre>
+
+    <p>
+      The shader evaluates three different SDF poses -- a sitting silhouette with pointed ears, a walking shape
+      with extended legs, and a sleeping loaf. Each is a combination of circles, ellipses, and triangles composed
+      with smooth-min blending. It's not pixel art, it's not sprites -- it's pure math running on the GPU.
+    </p>
+
+    <h2>ECS: data-oriented cat simulation</h2>
+
+    <p>
+      Each cat is an <a href="https://github.com/Ralith/hecs">hecs</a> entity with components for position, velocity,
+      behavior state, personality, and appearance. The simulation runs at a fixed 60Hz timestep with interpolated
+      rendering -- the accumulator pattern ensures smooth visuals regardless of monitor refresh rate.
+    </p>
+
+    <p>
+      Behavior is a simple state machine: Idle, Walking, Running, Sleeping, Grooming, ChasingMouse, ChasingCat,
+      Playing. Transitions are weighted by personality -- lazy cats sleep more, energetic cats run more, curious
+      cats chase the mouse more often.
+    </p>
+
+    <h2>Making cats social</h2>
+
+    <p>
+      This was the fun part. The spatial hash grid (128px cells, 1024 buckets) gets rebuilt every tick and enables
+      O(1) neighbor queries. But the tricky bit is that hecs doesn't allow mutable world access during iteration,
+      so you can't just "look at your neighbor and react."
+    </p>
+
+    <h3>The snapshot cache pattern</h3>
+
+    <p>
+      During spatial hash rebuild, I cache a flat <code>Vec&lt;CatSnapshot&gt;</code> alongside the grid. Each
+      snapshot holds entity handle, position, behavior state, and personality -- about 40 bytes per cat, 40KB total
+      for 1000 cats, which fits comfortably in L1 cache.
+    </p>
+
+    <p>
+      The interaction system then runs in three phases:
+    </p>
+
+    <ol>
+      <li><strong>Steer active</strong> -- cats already in ChasingCat/Playing states update their velocity toward
+      their target. Two-pass: read positions into a buffer, then write new velocities.</li>
+      <li><strong>Phase read</strong> -- iterate all cats, query neighbors from the spatial hash, compute separation
+      forces and social interaction decisions. This phase never touches the ECS world -- it reads only from the
+      snapshot cache and writes commands to a buffer.</li>
+      <li><strong>Phase write</strong> -- apply separation velocities and execute interaction commands (start play,
+      start chase, flee, join nap). State guards prevent overwriting important states like ChasingMouse.</li>
+    </ol>
+
+    <p>
+      The result: cats that play together, chase and flee from each other, form cozy nap clusters near sleeping
+      neighbors, and push apart when they get too close. All with zero allocations per frame.
+    </p>
+
+    <h2>Performance</h2>
+
+    <div class="highlight">
+      <p><strong>1000 cats, single draw call, ~47 FPS</strong> at 4096x2160 on an RTX 5070 Ti.
+      The simulation budget stays under 2ms. Spatial hash rebuild is sub-millisecond.
+      The bottleneck is purely fill rate at 4K -- at 1080p it runs well over 60 FPS.</p>
+    </div>
+
+    <p>Key decisions that keep it fast:</p>
+
+    <ul>
+      <li>Fixed-size instance buffer (pre-allocated for 4096 cats, write-only from CPU)</li>
+      <li>Spatial hash with multiplicative hashing -- no tree traversal, no allocations</li>
+      <li>Snapshot cache eliminates per-neighbor ECS lookups</li>
+      <li><code>dist_sq</code> early-out avoids sqrt for most separation checks</li>
+      <li>Pair deduplication (<code>my_idx &lt; neighbor_idx</code>) halves social interaction evaluations</li>
+      <li><code>fastrand::Rng</code> for all randomness -- no allocation, no syscalls</li>
+    </ul>
+
+    <h2>What's next</h2>
+
+    <p>
+      The cats need to become aware of your actual windows -- walking on title bars, sitting on the taskbar,
+      jumping between windows. That's Milestone 6. I also want better procedural visuals (animation frames,
+      tail swishing, eye blinks) and a system tray icon for settings.
+    </p>
+
+    <p>
+      But honestly? My wife is already happy with the current version. Sometimes the best feature is just making
+      the cats bigger.
+    </p>
+
+    <p>
+      <strong>Try it:</strong>
+      <a href="https://github.com/TrentSterling/catswarm">github.com/TrentSterling/catswarm</a>
+    </p>
+  </article>
+
+  <footer>
+    <div>
+      <a href="https://github.com/TrentSterling/catswarm">GitHub</a>
+      <a href="https://tront.xyz">tront.xyz</a>
+      <a href="https://bsky.app/profile/tront.xyz">Bluesky</a>
+      <a href="index.html">Landing Page</a>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
