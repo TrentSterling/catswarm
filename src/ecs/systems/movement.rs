@@ -2,6 +2,10 @@ use glam::Vec2;
 
 use crate::ecs::components::{BehaviorState, CatState, Position, PrevPosition, Velocity};
 use crate::heatmap::Heatmap;
+use crate::spatial::{CatSnapshot, SpatialHash};
+
+/// Cat collision radius multiplier (base_size * this = collision circle radius in pixels).
+const COLLISION_RADIUS_SCALE: f32 = 15.0;
 
 /// Friction coefficient — multiplied per tick to slow cats down.
 const FRICTION: f32 = 0.92;
@@ -110,5 +114,72 @@ pub fn integrate(
         let margin = 8.0;
         pos.0.x = pos.0.x.clamp(margin, screen_w - margin);
         pos.0.y = pos.0.y.clamp(margin, screen_h - margin);
+    }
+}
+
+/// Resolve circle-circle collisions between cats.
+/// Runs after spatial hash rebuild. Pushes overlapping cats apart
+/// so they don't clip through each other. Stacked cats are skipped
+/// (their position is managed by the tower system).
+pub fn resolve_collisions(
+    world: &mut hecs::World,
+    snapshots: &[CatSnapshot],
+    grid: &SpatialHash,
+) {
+    let len = snapshots.len();
+    if len == 0 {
+        return;
+    }
+
+    // Accumulate position corrections per snapshot index
+    let mut corrections = vec![Vec2::ZERO; len];
+
+    for i in 0..len {
+        let me = &snapshots[i];
+        // Skip stacked cats — tower system manages their position
+        if me.is_stacked {
+            continue;
+        }
+        let my_radius = me.size * COLLISION_RADIUS_SCALE;
+
+        grid.query_neighbors(me.pos, |j_idx| {
+            let j = j_idx as usize;
+            // Only process each pair once (i < j), skip out-of-range
+            if j <= i || j >= len {
+                return;
+            }
+            let them = &snapshots[j];
+            if them.is_stacked {
+                return;
+            }
+
+            let delta = me.pos - them.pos;
+            let dist_sq = delta.length_squared();
+            let their_radius = them.size * COLLISION_RADIUS_SCALE;
+            let min_dist = my_radius + their_radius;
+
+            if dist_sq < min_dist * min_dist && dist_sq > 0.001 {
+                let dist = dist_sq.sqrt();
+                let overlap = min_dist - dist;
+                let normal = delta / dist;
+                // Mass-weighted: bigger cats move less
+                let total_size = me.size + them.size;
+                let my_ratio = them.size / total_size;
+                let their_ratio = me.size / total_size;
+
+                corrections[i] += normal * overlap * my_ratio;
+                corrections[j] -= normal * overlap * their_ratio;
+            }
+        });
+    }
+
+    // Apply position corrections
+    for (idx, snap) in snapshots.iter().enumerate() {
+        let c = corrections[idx];
+        if c.length_squared() > 0.001 {
+            if let Ok(mut pos) = world.get::<&mut Position>(snap.entity) {
+                pos.0 += c;
+            }
+        }
     }
 }

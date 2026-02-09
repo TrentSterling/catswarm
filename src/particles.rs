@@ -207,7 +207,7 @@ impl ParticleSystem {
 
             buf.push(CatInstance {
                 position: p.pos.into(),
-                size: p.size,
+                size: [p.size, p.size],
                 color,
                 frame: p.frame,
                 rotation: 0.0,

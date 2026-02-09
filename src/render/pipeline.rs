@@ -82,39 +82,39 @@ impl CatPipeline {
             push_constant_ranges: &[],
         });
 
-        // Instance buffer layout
+        // Instance buffer layout (28 bytes per instance)
         let instance_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<CatInstance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
-                // offset (vec2<f32>)
+                // offset (vec2<f32>) — 0
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
                     offset: 0,
                     shader_location: 2,
                 },
-                // size (f32)
+                // size (vec2<f32>) — 8
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32,
+                    format: wgpu::VertexFormat::Float32x2,
                     offset: 8,
                     shader_location: 3,
                 },
-                // color (u32)
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Uint32,
-                    offset: 12,
-                    shader_location: 4,
-                },
-                // frame (u32)
+                // color (u32) — 16
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Uint32,
                     offset: 16,
+                    shader_location: 4,
+                },
+                // frame (u32) — 20
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32,
+                    offset: 20,
                     shader_location: 5,
                 },
-                // rotation (f32)
+                // rotation (f32) — 24
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32,
-                    offset: 20,
+                    offset: 24,
                     shader_location: 6,
                 },
             ],

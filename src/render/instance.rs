@@ -4,17 +4,17 @@ use glam::Vec2;
 use crate::ecs::components::{Appearance, BehaviorState, CatState, Position, PrevPosition};
 
 /// Per-instance data uploaded to GPU each frame.
-/// Stride = 24 bytes, GPU-aligned.
+/// Stride = 28 bytes.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct CatInstance {
     /// Screen position (x, y).
     pub position: [f32; 2],
-    /// Scale multiplier.
-    pub size: f32,
+    /// Scale multiplier (width, height) — supports squash & stretch.
+    pub size: [f32; 2],
     /// RGBA color packed as u32.
     pub color: u32,
-    /// Animation frame index (0=sitting, 1=walking, 2=sleeping, 3=circle).
+    /// Animation frame index (0=sitting, 1=walking, 2=sleeping, 3=circle, etc).
     pub frame: u32,
     /// Rotation angle in radians (used for spawn somersault).
     pub rotation: f32,
@@ -48,7 +48,7 @@ impl CatInstance {
 
         Self {
             position: interp.into(),
-            size: appearance.size,
+            size: [appearance.size, appearance.size],
             color: appearance.color,
             frame,
             rotation: 0.0,

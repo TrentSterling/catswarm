@@ -4,6 +4,7 @@ pub mod interaction;
 pub mod mouse;
 pub mod movement;
 pub mod spatial;
+pub mod towers;
 pub mod window_aware;
 
 use crate::debug::timer::{SystemPhase, SystemTimers};
@@ -59,6 +60,12 @@ pub fn tick(
     interaction::update(world, snapshots, grid, interaction_bufs, rng, dt);
     timers.end(SystemPhase::Interaction);
 
-    // 6. Window awareness (cats perch on titlebars)
+    // 6. Circle collision resolution (push overlapping cats apart)
+    movement::resolve_collisions(world, snapshots, grid);
+
+    // 7. Cat tower management (stacking, collapse, new climbers)
+    towers::update(world, snapshots, grid, rng);
+
+    // 8. Window awareness (cats perch on titlebars)
     window_aware::update(world, platforms, rng);
 }

@@ -77,6 +77,12 @@ pub struct SleepingPile {
     pub breathing_offset: f32,
 }
 
+/// A cat sitting on top of another cat (cat tower).
+#[derive(Debug, Clone, Copy)]
+pub struct Stacked {
+    pub base: hecs::Entity,
+}
+
 /// Spawn drop-in animation. Physics-based: gravity fall, bounce on impact, eased rotation.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnAnimation {
