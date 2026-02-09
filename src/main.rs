@@ -8,6 +8,7 @@ mod mode;
 mod platform;
 mod render;
 mod spatial;
+mod toy;
 mod util;
 
 fn main() {

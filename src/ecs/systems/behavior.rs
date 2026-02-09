@@ -60,6 +60,9 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
             BehaviorState::ChasingCat | BehaviorState::Playing => {
                 // Handled by interaction system
             }
+            BehaviorState::Parading => {
+                // Handled by interaction system (velocity maintained there)
+            }
         }
 
         if state.timer <= 0.0 {
@@ -85,6 +88,12 @@ pub fn update(world: &mut hecs::World, dt: f32, rng: &mut fastrand::Rng) {
                     // After zoomies, rest (idle)
                     state.state = BehaviorState::Idle;
                     state.timer = 1.0 + rng.f32() * 2.0;
+                    continue;
+                }
+                BehaviorState::Parading => {
+                    // Parade ended, go back to walking
+                    state.state = BehaviorState::Walking;
+                    state.timer = 2.0 + rng.f32() * 3.0;
                     continue;
                 }
                 _ => {}

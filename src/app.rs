@@ -10,10 +10,11 @@ use crate::cat;
 use crate::click::ClickState;
 use crate::debug::timer::{SystemPhase, SystemTimers};
 use crate::debug::DebugOverlay;
-use crate::ecs::components::{Appearance, CatState, Position, PrevPosition};
+use crate::ecs::components::{Appearance, CatName, CatState, Personality, Position, PrevPosition};
 use crate::ecs::systems;
 use crate::ecs::systems::interaction::InteractionBuffers;
 use crate::ecs::systems::mouse::CursorState;
+use crate::ecs::systems::window_aware::DesktopWindow;
 use crate::heatmap::Heatmap;
 use crate::mode::{AtkAction, ModeState};
 use crate::platform;
@@ -21,6 +22,7 @@ use crate::render::instance::CatInstance;
 use crate::render::trail::TrailSystem;
 use crate::render::GpuState;
 use crate::spatial::{CatSnapshot, SpatialHash};
+use crate::toy::YarnBall;
 
 /// Target simulation tick rate (seconds per tick).
 const TICK_RATE: f64 = 1.0 / 60.0;
@@ -76,6 +78,13 @@ struct App {
     trail_system: TrailSystem,
     heatmap: Heatmap,
 
+    // Toy
+    yarn_ball: YarnBall,
+
+    // Window platforms (periodically refreshed)
+    desktop_windows: Vec<DesktopWindow>,
+    window_refresh_timer: f64,
+
     // RNG (shared, deterministic per session)
     rng: fastrand::Rng,
 
@@ -111,6 +120,9 @@ impl App {
             click_state: ClickState::new(),
             trail_system: TrailSystem::new(),
             heatmap: Heatmap::new(1.0, 1.0),
+            yarn_ball: YarnBall::new(),
+            desktop_windows: Vec::new(),
+            window_refresh_timer: 0.0,
             rng: fastrand::Rng::new(),
             last_frame_time: None,
             accumulator: 0.0,
@@ -139,16 +151,21 @@ impl App {
 
         // Poll mouse buttons for click interactions
         #[cfg(windows)]
-        let (left_down, right_down) = platform::win32::get_mouse_buttons();
+        let (left_down, right_down, middle_down) = platform::win32::get_mouse_buttons();
         #[cfg(not(windows))]
-        let (left_down, right_down) = (false, false);
+        let (left_down, right_down, middle_down) = (false, false, false);
 
         self.click_state.update(
             left_down,
             right_down,
+            middle_down,
             glam::Vec2::new(mouse_x, mouse_y),
             dt as f32,
         );
+
+        // Update yarn ball physics
+        self.yarn_ball
+            .update(dt as f32, self.screen_w as f32, self.screen_h as f32);
 
         // Borrow timers from debug overlay (or use a throwaway).
         let timers = match &mut self.debug {
@@ -170,14 +187,18 @@ impl App {
                 &mut self.snapshots,
                 &mut self.interaction_bufs,
                 timers,
+                &self.heatmap,
+                self.mode_state.edge_affinity,
+                &self.desktop_windows,
             );
 
-            // Click interactions (startle, treats, laser)
+            // Click interactions (startle, treats, laser, yarn ball)
             systems::click::update(
                 &mut self.world,
                 &self.click_state,
                 glam::Vec2::new(mouse_x, mouse_y),
                 &mut self.rng,
+                &mut self.yarn_ball,
             );
 
             self.accumulator -= TICK_RATE;
@@ -204,6 +225,17 @@ impl App {
             self.instance_buf
                 .push(CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha));
         }
+        // Add yarn ball as a visible instance (red ball)
+        if self.yarn_ball.active {
+            self.instance_buf.push(CatInstance {
+                position: self.yarn_ball.pos.into(),
+                size: 0.4,
+                color: 0xFF2020FF, // bright red
+                frame: 0,          // sitting frame (round-ish)
+                _pad: 0,
+            });
+        }
+
         timers.end(SystemPhase::BuildInstances);
     }
 
@@ -367,6 +399,31 @@ impl ApplicationHandler for App {
             }
         }
 
+        // Periodically refresh desktop window list for window awareness
+        #[cfg(windows)]
+        {
+            let dt = self.last_frame_time
+                .map(|t| instant::Instant::now().duration_since(t).as_secs_f64())
+                .unwrap_or(0.016);
+            self.window_refresh_timer += dt;
+            if self.window_refresh_timer >= 2.0 {
+                self.window_refresh_timer = 0.0;
+                if let Some(window) = &self.window {
+                    let hwnd = platform::win32::get_hwnd(window);
+                    let rects = platform::win32::enumerate_windows(hwnd);
+                    self.desktop_windows = rects
+                        .into_iter()
+                        .map(|r| DesktopWindow {
+                            left: r.x as f32,
+                            top: r.y as f32,
+                            right: (r.x + r.w) as f32,
+                            bottom: (r.y + r.h) as f32,
+                        })
+                        .collect();
+                }
+            }
+        }
+
         // Sync debug mode display + visual toggles
         if let Some(debug) = &mut self.debug {
             debug.current_mode = self.mode_state.mode;
@@ -375,6 +432,40 @@ impl ApplicationHandler for App {
             debug.energy_scale = self.mode_state.behavior_energy_scale;
             self.trail_system.enabled = debug.show_trails;
             self.heatmap.enabled = debug.show_heatmap;
+
+            // Tooltip hit-test: find nearest cat to mouse cursor
+            if debug.visible {
+                #[cfg(windows)]
+                let (mx, my) = platform::win32::get_mouse_pos();
+                #[cfg(not(windows))]
+                let (mx, my) = (0.0f32, 0.0f32);
+                let mouse = glam::Vec2::new(mx, my);
+
+                let mut best: Option<(f32, crate::debug::HoveredCatInfo)> = None;
+                for (_, (pos, name, state, personality)) in self
+                    .world
+                    .query::<(&Position, &CatName, &CatState, &Personality)>()
+                    .iter()
+                {
+                    let dist_sq = (pos.0 - mouse).length_squared();
+                    if dist_sq < 40.0 * 40.0 {
+                        if best.is_none() || dist_sq < best.as_ref().expect("checked").0 {
+                            best = Some((
+                                dist_sq,
+                                crate::debug::HoveredCatInfo {
+                                    screen_pos: pos.0,
+                                    name: name.0.clone(),
+                                    state: state.state,
+                                    personality: *personality,
+                                },
+                            ));
+                        }
+                    }
+                }
+                debug.hovered_cat = best.map(|(_, info)| info);
+            } else {
+                debug.hovered_cat = None;
+            }
         }
 
         if let Some(w) = &self.window {

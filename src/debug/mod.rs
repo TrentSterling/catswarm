@@ -5,8 +5,19 @@ use winit::window::Window;
 
 use self::ring::RingBuffer;
 use self::timer::{SystemPhase, SystemTimers};
+use glam::Vec2;
+
+use crate::ecs::components::{BehaviorState, Personality};
 use crate::mode::AppMode;
 use crate::render::GpuState;
+
+/// Info about the cat currently under the mouse cursor.
+pub struct HoveredCatInfo {
+    pub screen_pos: Vec2,
+    pub name: String,
+    pub state: BehaviorState,
+    pub personality: Personality,
+}
 
 /// Number of frame times to keep in the histogram.
 const FRAME_HISTORY_LEN: usize = 300;
@@ -53,6 +64,9 @@ pub struct DebugOverlay {
     /// Visual toggle controls.
     pub show_trails: bool,
     pub show_heatmap: bool,
+
+    /// Hovered cat tooltip info (updated by app each frame).
+    pub hovered_cat: Option<HoveredCatInfo>,
 
     // Stats accumulator (replaces FrameStats).
     frame_count: u64,
@@ -121,6 +135,7 @@ impl DebugOverlay {
             selected_mode_index: 1, // Play
             show_trails: false,
             show_heatmap: false,
+            hovered_cat: None,
             frame_count: 0,
             log_timer: 0.0,
             log_frame_count: 0,
@@ -223,6 +238,22 @@ impl DebugOverlay {
 
         // Snapshot read-only state for UI drawing (avoids borrow conflict
         // between egui_ctx.run() borrowing self and the closure borrowing self).
+        let (hovered_name, hovered_state, hovered_personality) =
+            if let Some(ref info) = self.hovered_cat {
+                (
+                    Some(info.name.clone()),
+                    Some(format!("{:?}", info.state)),
+                    Some([
+                        info.personality.laziness,
+                        info.personality.energy,
+                        info.personality.curiosity,
+                        info.personality.skittishness,
+                    ]),
+                )
+            } else {
+                (None, None, None)
+            };
+
         let ui_state = UiSnapshot {
             visible: self.visible,
             fps: self.fps,
@@ -237,6 +268,9 @@ impl DebugOverlay {
             idle_seconds: self.idle_seconds,
             edge_affinity: self.edge_affinity,
             energy_scale: self.energy_scale,
+            hovered_cat_name: hovered_name,
+            hovered_cat_state: hovered_state,
+            hovered_cat_personality: hovered_personality,
         };
 
         // Mutable controls — read from self, written back after run().
@@ -341,6 +375,9 @@ struct UiSnapshot {
     idle_seconds: f64,
     edge_affinity: f32,
     energy_scale: f32,
+    hovered_cat_name: Option<String>,
+    hovered_cat_state: Option<String>,
+    hovered_cat_personality: Option<[f32; 4]>,
 }
 
 fn draw_ui(
@@ -521,5 +558,42 @@ fn draw_ui(
                 s.entity_count, s.tick_count
             ));
             ui.label("F11: Mode | F12: Toggle | ESC: Quit");
+            ui.label("Middle-click: Yarn Ball");
         });
+
+    // --- Cat tooltip (floating near cursor) ---
+    if let Some(ref name) = s.hovered_cat_name {
+        let tooltip_frame = egui::Frame::NONE
+            .fill(egui::Color32::from_rgba_unmultiplied(30, 30, 30, 230))
+            .corner_radius(4.0)
+            .inner_margin(6.0);
+
+        egui::Window::new("cat_tooltip")
+            .title_bar(false)
+            .fixed_pos(ctx.input(|i| {
+                let pos = i.pointer.hover_pos().unwrap_or(egui::pos2(0.0, 0.0));
+                [pos.x + 15.0, pos.y - 10.0]
+            }))
+            .resizable(false)
+            .frame(tooltip_frame)
+            .show(ctx, |ui| {
+                ui.style_mut().visuals.override_text_color =
+                    Some(egui::Color32::from_gray(230));
+                ui.label(egui::RichText::new(name).strong().size(14.0));
+                if let Some(ref state_str) = s.hovered_cat_state {
+                    ui.label(format!("Mood: {}", state_str));
+                }
+                if let Some(p) = s.hovered_cat_personality {
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "Lazy:{:.0}% Energy:{:.0}% Curious:{:.0}% Skittish:{:.0}%",
+                            p[0] * 100.0,
+                            p[1] * 100.0,
+                            p[2] * 100.0,
+                            p[3] * 100.0,
+                        ));
+                    });
+                }
+            });
+    }
 }

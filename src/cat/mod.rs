@@ -31,8 +31,34 @@ pub fn spawn_cats(world: &mut hecs::World, count: usize, screen_w: f32, screen_h
                 size: 0.6 + rng.f32() * 0.8, // 0.6x to 1.4x
             },
             SpatialCell(0),
+            CatName(generate_cat_name(&mut rng)),
         ));
     }
+}
+
+/// Generate a procedural cat name from name parts.
+fn generate_cat_name(rng: &mut fastrand::Rng) -> String {
+    const PREFIXES: &[&str] = &[
+        "", "", "", "", "", "Sir ", "Lady ", "Professor ", "Captain ",
+        "Dr. ", "Little ", "Big ", "Lord ", "Princess ",
+    ];
+    const NAMES: &[&str] = &[
+        "Whiskers", "Mittens", "Shadow", "Luna", "Mochi", "Noodle", "Biscuit",
+        "Pepper", "Ginger", "Oreo", "Tofu", "Pickles", "Beans", "Nugget",
+        "Waffles", "Muffin", "Cleo", "Felix", "Salem", "Ziggy",
+        "Pumpkin", "Smokey", "Tiger", "Patches", "Boots", "Socks",
+        "Marble", "Dusty", "Cinnamon", "Toffee", "Chai", "Latte",
+        "Sprout", "Pixel", "Widget", "Byte", "Cookie", "Pretzel",
+    ];
+    const SUFFIXES: &[&str] = &[
+        "", "", "", "", "", " Jr.", " III", " the Great", " McFluff",
+    ];
+    format!(
+        "{}{}{}",
+        PREFIXES[rng.usize(0..PREFIXES.len())],
+        NAMES[rng.usize(0..NAMES.len())],
+        SUFFIXES[rng.usize(0..SUFFIXES.len())],
+    )
 }
 
 /// Generate a random cat-ish color (warm tones, grays, blacks, whites).

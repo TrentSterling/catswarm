@@ -123,6 +123,8 @@ pub struct InteractionBuffers {
     cohesion_count: Vec<u32>,
     alignment_sum: Vec<Vec2>,
     alignment_count: Vec<u32>,
+    parade_dir_sum: Vec<Vec2>,
+    parade_count: Vec<u32>,
     active: Vec<ActiveInteraction>,
 }
 
@@ -135,6 +137,8 @@ impl InteractionBuffers {
             cohesion_count: vec![0; capacity],
             alignment_sum: vec![Vec2::ZERO; capacity],
             alignment_count: vec![0; capacity],
+            parade_dir_sum: vec![Vec2::ZERO; capacity],
+            parade_count: vec![0; capacity],
             active: Vec::with_capacity(64),
         }
     }
@@ -280,12 +284,16 @@ fn phase_read(
     bufs.cohesion_count.resize(len, 0);
     bufs.alignment_sum.resize(len, Vec2::ZERO);
     bufs.alignment_count.resize(len, 0);
+    bufs.parade_dir_sum.resize(len, Vec2::ZERO);
+    bufs.parade_count.resize(len, 0);
     for i in 0..len {
         bufs.separation[i] = Vec2::ZERO;
         bufs.cohesion_sum[i] = Vec2::ZERO;
         bufs.cohesion_count[i] = 0;
         bufs.alignment_sum[i] = Vec2::ZERO;
         bufs.alignment_count[i] = 0;
+        bufs.parade_dir_sum[i] = Vec2::ZERO;
+        bufs.parade_count[i] = 0;
     }
 
     let count = snapshots.len();
@@ -335,6 +343,20 @@ fn phase_read(
                     // Alignment: accumulate neighbor velocities
                     bufs.alignment_sum[my_idx] += them.vel;
                     bufs.alignment_count[my_idx] += 1;
+                }
+            }
+
+            // --- Parade detection (walking/running cats with aligned velocity) ---
+            if dist_sq < PARADE_RADIUS_SQ
+                && matches!(me.state, BehaviorState::Walking | BehaviorState::Running | BehaviorState::Parading)
+                && matches!(them.state, BehaviorState::Walking | BehaviorState::Running | BehaviorState::Parading)
+                && me.vel.length_squared() > 1.0
+                && them.vel.length_squared() > 1.0
+            {
+                let dot = me.vel.normalize().dot(them.vel.normalize());
+                if dot > 0.7 {
+                    bufs.parade_dir_sum[my_idx] += them.vel.normalize();
+                    bufs.parade_count[my_idx] += 1;
                 }
             }
 
@@ -538,6 +560,28 @@ fn phase_write(
         }
         if let Ok(mut vel) = world.get::<&mut Velocity>(snap.entity) {
             vel.0 += total_force;
+        }
+    }
+
+    // Apply parade behavior: strong alignment for cats with enough aligned neighbors
+    for (idx, snap) in snapshots.iter().enumerate() {
+        if bufs.parade_count[idx] >= (PARADE_MIN_CATS - 1) as u32 {
+            let avg_dir = bufs.parade_dir_sum[idx] / bufs.parade_count[idx] as f32;
+            if avg_dir.length_squared() > 0.01 {
+                let parade_vel = avg_dir.normalize() * PARADE_SPEED;
+                if let Ok(mut vel) = world.get::<&mut Velocity>(snap.entity) {
+                    vel.0 = vel.0 * 0.7 + parade_vel * 0.3;
+                }
+                if let Ok(mut state) = world.get::<&mut CatState>(snap.entity) {
+                    if matches!(
+                        state.state,
+                        BehaviorState::Walking | BehaviorState::Running | BehaviorState::Parading
+                    ) {
+                        state.state = BehaviorState::Parading;
+                        state.timer = 0.5; // refresh each tick while aligned
+                    }
+                }
+            }
         }
     }
 

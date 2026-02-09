@@ -35,7 +35,12 @@ pub enum BehaviorState {
     Zoomies,
     Startled,
     Yawning,
+    Parading,
 }
+
+/// Cat name for tooltips.
+#[derive(Debug, Clone)]
+pub struct CatName(pub String);
 
 /// Personality traits — each in [0.0, 1.0].
 #[derive(Debug, Clone, Copy)]
