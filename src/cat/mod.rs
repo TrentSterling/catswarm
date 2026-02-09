@@ -9,8 +9,8 @@ pub fn spawn_cats(world: &mut hecs::World, count: usize, screen_w: f32, screen_h
     for _ in 0..count {
         let target_x = rng.f32() * screen_w;
         let target_y = rng.f32() * screen_h;
-        // Start above the screen with some horizontal spread
-        let start_y = -(rng.f32() * 100.0 + 30.0);
+        // Start well above the screen for visible tumble time
+        let start_y = -(rng.f32() * 150.0 + 100.0);
         let pos = Vec2::new(target_x, start_y);
 
         world.spawn((
@@ -35,16 +35,17 @@ pub fn spawn_cats(world: &mut hecs::World, count: usize, screen_w: f32, screen_h
             SpatialCell(0),
             CatName(generate_cat_name(&mut rng)),
             SpawnAnimation {
+                start_y: start_y,
                 target_y,
-                progress: 0.0,
-                speed: 0.5 + rng.f32() * 0.4, // 0.5-0.9x — slower so flips are visible
-                // Most cats flip, some don't: 0 (20%), 1 (40%), 2 (30%), 3 (10%)
+                vel_y: 0.0, // starts at rest, gravity accelerates
+                // All cats flip: 1 (20%), 2 (50%), 3 (30%)
                 flips: match rng.u8(0..10) {
-                    0..=1 => 0,
-                    2..=5 => 1,
-                    6..=8 => 2,
+                    0..=1 => 1,
+                    2..=6 => 2,
                     _ => 3,
                 },
+                has_landed: false,
+                bounce_count: 0,
             },
         ));
     }

@@ -247,20 +247,27 @@ impl App {
         {
             let mut inst = CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha);
 
-            // Spawn somersault: cats tumble during the fall, land feet-first.
-            // Rotation must complete before the first bounce impact (1/2.75 ≈ 36%).
+            // Spawn animation: tumble during fall, land feet-first on impact.
             if let Some(anim) = spawn_anim {
-                if anim.flips > 0 {
-                    let spin_end = 1.0 / 2.75; // exact first bounce contact in bounce_out
-                    if anim.progress < spin_end {
-                        let spin_t = anim.progress / spin_end;
-                        // Ease-out quad on rotation so it decelerates smoothly
-                        let eased = spin_t * (2.0 - spin_t);
-                        let total_rotation = std::f32::consts::TAU * anim.flips as f32;
-                        inst.rotation = eased * total_rotation;
+                if !anim.has_landed {
+                    // During fall: walking frame (asymmetric, rotation visible)
+                    inst.frame = 1;
+
+                    // Rotation eased to fall progress (position-based, not time-based).
+                    // 0.0 at start_y, 1.0 at target_y — always completes at ground.
+                    let fall_dist = anim.target_y - anim.start_y;
+                    if fall_dist > 1.0 && anim.flips > 0 {
+                        let t = ((pos.0.y - anim.start_y) / fall_dist).clamp(0.0, 1.0);
+                        // Ease-in-out quadratic: slow start, fast middle, slow finish (lands upright)
+                        let eased = if t < 0.5 {
+                            2.0 * t * t
+                        } else {
+                            1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+                        };
+                        inst.rotation = eased * std::f32::consts::TAU * anim.flips as f32;
                     }
-                    // else: rotation stays 0.0 — upright for landing
                 }
+                // After landing: rotation = 0.0 (default), cat is upright for bounces
             }
 
             // Breathing animation for sleeping pile members
@@ -876,48 +883,48 @@ fn mood_color(state: BehaviorState) -> (f32, f32, f32) {
     }
 }
 
-/// Bounce-out easing: accelerates like gravity, bounces on impact.
-fn ease_bounce_out(t: f32) -> f32 {
-    if t < 1.0 / 2.75 {
-        7.5625 * t * t
-    } else if t < 2.0 / 2.75 {
-        let t = t - 1.5 / 2.75;
-        7.5625 * t * t + 0.75
-    } else if t < 2.5 / 2.75 {
-        let t = t - 2.25 / 2.75;
-        7.5625 * t * t + 0.9375
-    } else {
-        let t = t - 2.625 / 2.75;
-        7.5625 * t * t + 0.984375
-    }
-}
+/// Gravity for spawn animation (pixels/second²). Tuned for ~1s fall time.
+const SPAWN_GRAVITY: f32 = 1500.0;
+/// Velocity multiplier on bounce (energy retained).
+const BOUNCE_DAMPING: f32 = 0.4;
+/// After this many bounces, animation is done.
+const MAX_BOUNCES: u8 = 3;
+/// If velocity is below this after a bounce, stop early.
+const BOUNCE_VEL_THRESHOLD: f32 = 30.0;
 
-/// Advance spawn drop-in animations. Cats fall from above screen to their target Y.
-/// Uses bounce-out easing so they accelerate downward and bounce on landing.
-/// Removes the SpawnAnimation component when complete.
+/// Advance spawn drop-in animations with real physics.
+/// Gravity accelerates cats downward. On impact at target_y, velocity reverses
+/// with damping for a natural bounce. Removes SpawnAnimation when settled.
 fn update_spawn_animations(world: &mut hecs::World, dt: f32) {
-    let mut landed = Vec::new();
+    let mut done = Vec::new();
 
     for (entity, (pos, prev_pos, anim)) in
         world.query_mut::<(&mut Position, &mut PrevPosition, &mut SpawnAnimation)>()
     {
-        anim.progress += dt * anim.speed;
+        // Apply gravity (positive Y = downward on screen)
+        anim.vel_y += SPAWN_GRAVITY * dt;
+        prev_pos.0.y = pos.0.y;
+        pos.0.y += anim.vel_y * dt;
 
-        if anim.progress >= 1.0 {
+        // Ground collision detection
+        if pos.0.y >= anim.target_y {
             pos.0.y = anim.target_y;
-            prev_pos.0.y = anim.target_y;
-            landed.push(entity);
-        } else {
-            // Bounce-out: accelerates down (gravity feel), bounces on impact
-            let ease = ease_bounce_out(anim.progress);
+            anim.has_landed = true;
+            anim.bounce_count += 1;
 
-            let start_y = -80.0;
-            pos.0.y = start_y + (anim.target_y - start_y) * ease;
-            prev_pos.0.y = pos.0.y;
+            // Reverse velocity with damping
+            anim.vel_y = -anim.vel_y.abs() * BOUNCE_DAMPING;
+
+            // Check if animation is done (enough bounces or too little energy)
+            if anim.bounce_count >= MAX_BOUNCES || anim.vel_y.abs() < BOUNCE_VEL_THRESHOLD {
+                pos.0.y = anim.target_y;
+                prev_pos.0.y = anim.target_y;
+                done.push(entity);
+            }
         }
     }
 
-    for entity in landed {
+    for entity in done {
         let _ = world.remove_one::<SpawnAnimation>(entity);
     }
 }
