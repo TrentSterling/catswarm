@@ -162,24 +162,7 @@ impl App {
         #[cfg(not(windows))]
         let (mouse_x, mouse_y) = (0.0f32, 0.0f32);
 
-        // Poll mouse buttons for click interactions
-        #[cfg(windows)]
-        let (left_down, right_down, middle_down) = platform::win32::get_mouse_buttons();
-        #[cfg(not(windows))]
-        let (left_down, right_down, middle_down) = (false, false, false);
-
-        self.click_state.update(
-            left_down,
-            right_down,
-            middle_down,
-            glam::Vec2::new(mouse_x, mouse_y),
-            dt as f32,
-        );
-
-        // Update yarn ball physics (mouse pushes them when hovering near)
         let mouse_vec = glam::Vec2::new(mouse_x, mouse_y);
-        self.yarn_balls
-            .update(dt as f32, self.screen_w as f32, self.screen_h as f32, mouse_vec);
 
         // Borrow timers from debug overlay (or use a throwaway).
         let timers = match &mut self.debug {
@@ -191,6 +174,26 @@ impl App {
         let energy_scale = self.mode_state.behavior_energy_scale * self.daynight.energy_modifier;
 
         while self.accumulator >= TICK_RATE {
+            // Poll mouse buttons INSIDE the tick loop. GetAsyncKeyState's
+            // transition bit persists until read, so clicks can't be lost
+            // even when frame rate far exceeds tick rate (Mailbox mode).
+            #[cfg(windows)]
+            let (left_down, right_down, middle_down) = platform::win32::get_mouse_buttons();
+            #[cfg(not(windows))]
+            let (left_down, right_down, middle_down) = (false, false, false);
+
+            self.click_state.update(
+                left_down,
+                right_down,
+                middle_down,
+                mouse_vec,
+                TICK_RATE as f32,
+            );
+
+            // Update yarn ball physics per tick for consistent behavior
+            self.yarn_balls
+                .update(TICK_RATE as f32, self.screen_w as f32, self.screen_h as f32, mouse_vec);
+
             systems::tick(
                 &mut self.world,
                 TICK_RATE as f32,
@@ -292,15 +295,33 @@ impl App {
             let mut inst = CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha);
 
             // --- Shadow (rendered first = behind cat) ---
-            let shadow_alpha = 0x30u32;
-            let shadow_y_offset = appearance.size * 35.0; // below cat feet
-            self.instance_buf.push(CatInstance {
-                position: [inst.position[0], inst.position[1] + shadow_y_offset],
-                size: [appearance.size * 1.2, appearance.size * 0.4], // wide flat oval
-                color: (0x10 << 24) | (0x10 << 16) | (0x10 << 8) | shadow_alpha,
-                frame: 3, // circle SDF
-                rotation: 0.0,
-            });
+            // Shadow projects to ground at the cat's feet (~25px below center).
+            // During spawn animation it stays at landing Y, shrinking/fading with height.
+            let feet_offset = appearance.size * 25.0;
+            let (shadow_y, height_above_ground) = if let Some(anim) = spawn_anim {
+                // Airborne: shadow on the ground at landing position
+                let ground = anim.target_y + feet_offset;
+                let h = (anim.target_y - pos.0.y).max(0.0);
+                (ground, h)
+            } else {
+                // Grounded: shadow at feet level
+                (inst.position[1] + feet_offset, 0.0)
+            };
+            // Scale and fade shadow based on height (simulates depth)
+            let height_factor = 1.0 / (1.0 + height_above_ground * 0.004);
+            let shadow_scale_x = appearance.size * 0.9 * height_factor;
+            let shadow_scale_y = appearance.size * 0.3 * height_factor;
+            let shadow_alpha = (0x50 as f32 * height_factor) as u32;
+            if shadow_alpha > 0 {
+                // Pure black shadow — premultiplied alpha (RGB=0, A=opacity)
+                self.instance_buf.push(CatInstance {
+                    position: [inst.position[0], shadow_y],
+                    size: [shadow_scale_x, shadow_scale_y],
+                    color: shadow_alpha, // 0x000000xx — black with variable alpha
+                    frame: 3,
+                    rotation: 0.0,
+                });
+            }
 
             // --- Squash & stretch based on velocity ---
             let speed = vel.0.length();
