@@ -28,6 +28,25 @@ const CHASE_CHANCE: f32 = 0.005;
 /// Per-tick probability an idle cat joins a sleeping neighbor.
 const NAP_CLUSTER_CHANCE: f32 = 0.015;
 
+/// Zoomie contagion: chance a nearby idle/walking cat catches zoomies.
+const ZOOMIE_CONTAGION_CHANCE: f32 = 0.05;
+/// Contagious yawn: chance a nearby idle/grooming cat yawns.
+const YAWN_CONTAGION_CHANCE: f32 = 0.30;
+/// Sleeping cat chance per tick to start yawning (seed for cascade).
+const YAWN_SEED_CHANCE: f32 = 0.001;
+/// Contagion interaction range.
+const CONTAGION_RADIUS: f32 = 80.0;
+const CONTAGION_RADIUS_SQ: f32 = CONTAGION_RADIUS * CONTAGION_RADIUS;
+/// Parade detection: min cats walking in similar direction within range.
+const PARADE_MIN_CATS: usize = 3;
+/// Parade detection range.
+const PARADE_RADIUS: f32 = 100.0;
+const PARADE_RADIUS_SQ: f32 = PARADE_RADIUS * PARADE_RADIUS;
+/// Parade follow distance behind leader.
+const PARADE_FOLLOW_DIST: f32 = 40.0;
+/// Parade follow speed.
+const PARADE_SPEED: f32 = 45.0;
+
 /// Velocity when chasing another cat.
 const CAT_CHASE_SPEED: f32 = 90.0;
 /// Velocity when fleeing.
@@ -60,6 +79,15 @@ enum InteractionCmd {
         away_from: Vec2,
     },
     JoinNap {
+        entity: hecs::Entity,
+    },
+    CatchZoomies {
+        entity: hecs::Entity,
+    },
+    ContagiousYawn {
+        entity: hecs::Entity,
+    },
+    SeedYawn {
         entity: hecs::Entity,
     },
 }
@@ -358,9 +386,62 @@ fn phase_read(
                     bufs.commands.push(InteractionCmd::JoinNap {
                         entity: me.entity,
                     });
+                    return;
+                }
+            }
+
+            // --- Contagion interactions (use wider radius) ---
+            if dist_sq > CONTAGION_RADIUS_SQ {
+                return;
+            }
+
+            // Zoomie contagion: zooming cat near idle/walking cat
+            if me.state == BehaviorState::Zoomies
+                && matches!(them.state, BehaviorState::Idle | BehaviorState::Walking)
+            {
+                if rng.f32() < ZOOMIE_CONTAGION_CHANCE {
+                    bufs.commands.push(InteractionCmd::CatchZoomies {
+                        entity: them.entity,
+                    });
+                }
+            }
+            if them.state == BehaviorState::Zoomies
+                && matches!(me.state, BehaviorState::Idle | BehaviorState::Walking)
+            {
+                if rng.f32() < ZOOMIE_CONTAGION_CHANCE {
+                    bufs.commands.push(InteractionCmd::CatchZoomies {
+                        entity: me.entity,
+                    });
+                }
+            }
+
+            // Contagious yawn: yawning cat near idle/grooming cat
+            if me.state == BehaviorState::Yawning
+                && matches!(them.state, BehaviorState::Idle | BehaviorState::Grooming)
+            {
+                if rng.f32() < YAWN_CONTAGION_CHANCE {
+                    bufs.commands.push(InteractionCmd::ContagiousYawn {
+                        entity: them.entity,
+                    });
+                }
+            }
+            if them.state == BehaviorState::Yawning
+                && matches!(me.state, BehaviorState::Idle | BehaviorState::Grooming)
+            {
+                if rng.f32() < YAWN_CONTAGION_CHANCE {
+                    bufs.commands.push(InteractionCmd::ContagiousYawn {
+                        entity: me.entity,
+                    });
                 }
             }
         });
+
+        // Seed yawns: sleeping cats occasionally start yawning
+        if me.state == BehaviorState::Sleeping && rng.f32() < YAWN_SEED_CHANCE {
+            bufs.commands.push(InteractionCmd::SeedYawn {
+                entity: me.entity,
+            });
+        }
     }
 }
 
@@ -444,6 +525,43 @@ fn phase_write(
                 }
                 if let Ok(mut vel) = world.get::<&mut Velocity>(entity) {
                     vel.0 = Vec2::ZERO;
+                }
+            }
+            InteractionCmd::CatchZoomies { entity } => {
+                if !can_start_interaction(world, entity) {
+                    continue;
+                }
+                if let Ok(mut state) = world.get::<&mut CatState>(entity) {
+                    state.state = BehaviorState::Zoomies;
+                    state.timer = 1.0 + rng.f32() * 1.0;
+                }
+                if let Ok(mut vel) = world.get::<&mut Velocity>(entity) {
+                    let angle = rng.f32() * std::f32::consts::TAU;
+                    vel.0 = Vec2::new(angle.cos(), angle.sin()) * 300.0;
+                }
+            }
+            InteractionCmd::ContagiousYawn { entity } => {
+                if !can_start_interaction(world, entity) {
+                    continue;
+                }
+                if let Ok(mut state) = world.get::<&mut CatState>(entity) {
+                    state.state = BehaviorState::Yawning;
+                    state.timer = 1.0;
+                }
+                if let Ok(mut vel) = world.get::<&mut Velocity>(entity) {
+                    vel.0 = Vec2::ZERO;
+                }
+            }
+            InteractionCmd::SeedYawn { entity } => {
+                // Sleeping cat starts yawning (seed for cascade)
+                if let Ok(state) = world.get::<&CatState>(entity) {
+                    if state.state != BehaviorState::Sleeping {
+                        continue;
+                    }
+                }
+                if let Ok(mut state) = world.get::<&mut CatState>(entity) {
+                    state.state = BehaviorState::Yawning;
+                    state.timer = 1.0;
                 }
             }
         }

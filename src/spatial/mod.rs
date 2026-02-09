@@ -7,6 +7,7 @@ use crate::ecs::components::{BehaviorState, Personality};
 pub struct CatSnapshot {
     pub entity: hecs::Entity,
     pub pos: Vec2,
+    pub vel: Vec2,
     pub state: BehaviorState,
     pub personality: Personality,
 }

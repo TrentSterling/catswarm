@@ -32,6 +32,9 @@ pub enum BehaviorState {
     FleeingCursor,
     ChasingCat,
     Playing,
+    Zoomies,
+    Startled,
+    Yawning,
 }
 
 /// Personality traits — each in [0.0, 1.0].
