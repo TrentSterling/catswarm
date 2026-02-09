@@ -3,7 +3,7 @@ use glam::Vec2;
 use crate::click::ClickState;
 use crate::ecs::components::{BehaviorState, CatState, Personality, Position, Velocity};
 use crate::ecs::systems::behavior;
-use crate::toy::YarnBalls;
+use crate::toy::{Boxes, YarnBalls};
 
 /// Startle radius: cats within this of a click get startled.
 const STARTLE_RADIUS: f32 = 100.0;
@@ -29,13 +29,19 @@ const YARN_CHASE_SPEED: f32 = 100.0;
 /// Yarn ball bat impulse when a cat reaches it.
 const YARN_BAT_IMPULSE: f32 = 250.0;
 
-/// Process click interactions: startle, treats, laser pointer, yarn balls.
+/// Box attraction radius.
+const BOX_ATTRACT_RADIUS: f32 = 200.0;
+/// Box approach speed (curiosity-scaled).
+const BOX_APPROACH_SPEED: f32 = 40.0;
+
+/// Process click interactions: startle, treats, laser pointer, yarn balls, boxes.
 pub fn update(
     world: &mut hecs::World,
     click: &ClickState,
     mouse_pos: Vec2,
     rng: &mut fastrand::Rng,
     yarn_balls: &mut YarnBalls,
+    boxes: &mut Boxes,
 ) {
     // --- Left click: startle nearest cat + flee impulse ---
     if click.left_clicked {
@@ -218,6 +224,60 @@ pub fn update(
         // Apply bat impulses
         for (idx, impulse) in bat_impulses {
             yarn_balls.bat(idx, impulse);
+        }
+    }
+
+    // --- Cardboard boxes: attract idle/walking cats, they sit inside ---
+    if !boxes.boxes.is_empty() {
+        let attract_sq = BOX_ATTRACT_RADIUS * BOX_ATTRACT_RADIUS;
+
+        for (_, (pos, vel, state, personality)) in world
+            .query_mut::<(&Position, &mut Velocity, &mut CatState, &Personality)>()
+        {
+            if !matches!(
+                state.state,
+                BehaviorState::Idle | BehaviorState::Walking
+            ) {
+                continue;
+            }
+            if personality.curiosity < 0.3 {
+                continue;
+            }
+
+            // Find nearest box with room
+            let mut best_idx: Option<usize> = None;
+            let mut best_dist_sq = attract_sq;
+            for (i, cbox) in boxes.boxes.iter().enumerate() {
+                if cbox.occupants >= 2 {
+                    continue;
+                }
+                let dist_sq = (cbox.pos - pos.0).length_squared();
+                if dist_sq < best_dist_sq {
+                    best_dist_sq = dist_sq;
+                    best_idx = Some(i);
+                }
+            }
+
+            if let Some(idx) = best_idx {
+                let box_pos = boxes.boxes[idx].pos;
+                let to_box = box_pos - pos.0;
+                let dist = best_dist_sq.sqrt();
+
+                if dist < 25.0 {
+                    // Cat sits in the box (becomes idle/grooming at box position)
+                    vel.0 = Vec2::ZERO;
+                    state.state = BehaviorState::Idle;
+                    state.timer = 5.0 + rng.f32() * 10.0; // sit for a while
+                    boxes.boxes[idx].occupants = (boxes.boxes[idx].occupants + 1).min(2);
+                } else {
+                    // Walk toward box
+                    let dir = to_box / dist;
+                    let speed = BOX_APPROACH_SPEED * (0.5 + personality.curiosity * 0.5);
+                    vel.0 = dir * speed;
+                    state.state = BehaviorState::Walking;
+                    state.timer = 0.5;
+                }
+            }
         }
     }
 }

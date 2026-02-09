@@ -131,6 +131,12 @@ pub fn is_y_pressed() -> bool {
     unsafe { GetAsyncKeyState(0x59) & 1 != 0 }
 }
 
+/// Check if B key was pressed since last call (cardboard box hotkey).
+pub fn is_b_pressed() -> bool {
+    // VK_B = 0x42
+    unsafe { GetAsyncKeyState(0x42) & 1 != 0 }
+}
+
 /// Check if F11 was pressed since last call (mode cycle hotkey).
 pub fn is_f11_pressed() -> bool {
     // VK_F11 = 0x7A

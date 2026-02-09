@@ -255,6 +255,26 @@ fn cat_walking_b(uv: vec2<f32>) -> f32 {
     return d;
 }
 
+// SDF cardboard box (open top, frame 9)
+fn sd_box_shape(uv: vec2<f32>) -> f32 {
+    let p = uv - vec2<f32>(0.5, 0.5);
+    // Box body — wide rectangle
+    let box_body = max(abs(p.x) - 0.3, abs(p.y - 0.05) - 0.2);
+    // Left flap — tilted outward
+    let flap_l = sd_triangle(p,
+        vec2<f32>(-0.3, -0.15),
+        vec2<f32>(-0.38, -0.28),
+        vec2<f32>(-0.15, -0.15)
+    );
+    // Right flap — tilted outward
+    let flap_r = sd_triangle(p,
+        vec2<f32>(0.15, -0.15),
+        vec2<f32>(0.38, -0.28),
+        vec2<f32>(0.3, -0.15)
+    );
+    return min(min(box_body, flap_l), flap_r);
+}
+
 // SDF heart shape (for love/chase particles)
 fn sd_heart(uv: vec2<f32>) -> f32 {
     let p = (uv - vec2<f32>(0.5, 0.5)) * 2.5;
@@ -342,7 +362,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 0=sitting, 1=walking, 2=sleeping, 3=circle, 4=heart, 5=star, 6=Z-letter, 7=walking-B
     var d: f32;
 
-    if state == 7u {
+    if state == 9u {
+        d = sd_box_shape(uv);
+    } else if state == 7u {
         d = cat_walking_b(uv);
     } else if state == 6u {
         d = sd_z_letter(uv);

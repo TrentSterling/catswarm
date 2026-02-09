@@ -1,5 +1,56 @@
 use glam::Vec2;
 
+// ---------------------------------------------------------------------------
+// Cardboard Box
+// ---------------------------------------------------------------------------
+
+/// A cardboard box that cats can sit in.
+#[derive(Debug, Clone, Copy)]
+pub struct CardboardBox {
+    pub pos: Vec2,
+    pub lifetime: f32,
+    /// Number of cats currently inside (0-2).
+    pub occupants: u8,
+}
+
+/// Manages cardboard boxes on screen.
+pub struct Boxes {
+    pub boxes: Vec<CardboardBox>,
+}
+
+const MAX_BOXES: usize = 5;
+const BOX_LIFETIME: f32 = 60.0;
+
+impl Boxes {
+    pub fn new() -> Self {
+        Self {
+            boxes: Vec::with_capacity(MAX_BOXES),
+        }
+    }
+
+    pub fn spawn(&mut self, pos: Vec2) {
+        if self.boxes.len() >= MAX_BOXES {
+            self.boxes.remove(0);
+        }
+        self.boxes.push(CardboardBox {
+            pos,
+            lifetime: BOX_LIFETIME,
+            occupants: 0,
+        });
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        for b in &mut self.boxes {
+            b.lifetime -= dt;
+        }
+        self.boxes.retain(|b| b.lifetime > 0.0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Yarn Ball
+// ---------------------------------------------------------------------------
+
 /// A single yarn ball with physics.
 #[derive(Debug, Clone, Copy)]
 pub struct YarnBall {
