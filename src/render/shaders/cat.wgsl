@@ -8,7 +8,7 @@ struct VertexInput {
 
 struct InstanceInput {
     @location(2) offset: vec2<f32>,
-    @location(3) size: f32,
+    @location(3) size: vec2<f32>,
     @location(4) color: u32,
     @location(5) frame: u32,
     @location(6) rotation: f32,

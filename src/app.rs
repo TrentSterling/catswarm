@@ -276,11 +276,12 @@ impl App {
         let alpha = self.interpolation_alpha();
         let time = self.elapsed_time as f32;
 
-        for (_, (pos, prev_pos, appearance, cat_state, pile, spawn_anim)) in self
+        for (_, (pos, prev_pos, vel, appearance, cat_state, pile, spawn_anim)) in self
             .world
             .query::<(
                 &Position,
                 &PrevPosition,
+                &crate::ecs::components::Velocity,
                 &Appearance,
                 &CatState,
                 Option<&SleepingPile>,
@@ -289,6 +290,40 @@ impl App {
             .iter()
         {
             let mut inst = CatInstance::from_components(pos, prev_pos, appearance, cat_state, alpha);
+
+            // --- Shadow (rendered first = behind cat) ---
+            let shadow_alpha = 0x30u32;
+            let shadow_y_offset = appearance.size * 35.0; // below cat feet
+            self.instance_buf.push(CatInstance {
+                position: [inst.position[0], inst.position[1] + shadow_y_offset],
+                size: [appearance.size * 1.2, appearance.size * 0.4], // wide flat oval
+                color: (0x10 << 24) | (0x10 << 16) | (0x10 << 8) | shadow_alpha,
+                frame: 3, // circle SDF
+                rotation: 0.0,
+            });
+
+            // --- Squash & stretch based on velocity ---
+            let speed = vel.0.length();
+            // Falling/jumping: stretch vertically (taller, thinner)
+            // Landing impact: squash horizontally (wider, shorter)
+            if let Some(anim) = spawn_anim {
+                if !anim.has_landed {
+                    // Falling: stretch based on velocity
+                    let stretch = (anim.vel_y.abs() / 600.0).clamp(0.0, 0.3);
+                    inst.size[0] *= 1.0 - stretch * 0.5; // thinner
+                    inst.size[1] *= 1.0 + stretch;        // taller
+                } else {
+                    // Just bounced: brief squash
+                    let squash = (anim.vel_y.abs() / 400.0).clamp(0.0, 0.3);
+                    inst.size[0] *= 1.0 + squash;         // wider
+                    inst.size[1] *= 1.0 - squash * 0.5;   // shorter
+                }
+            } else if speed > 150.0 {
+                // Zoomies/running: stretch in movement direction
+                let stretch = ((speed - 150.0) / 300.0).clamp(0.0, 0.2);
+                inst.size[0] *= 1.0 + stretch;
+                inst.size[1] *= 1.0 - stretch * 0.3;
+            }
 
             // Spawn animation: tumble during fall, land feet-first on impact.
             if let Some(anim) = spawn_anim {
@@ -316,7 +351,8 @@ impl App {
             // Breathing animation for sleeping pile members
             if let Some(pile) = pile {
                 let breath = (time * 2.0 + pile.breathing_offset).sin() * 0.04;
-                inst.size *= 1.0 + breath;
+                inst.size[0] *= 1.0 + breath;
+                inst.size[1] *= 1.0 + breath;
             }
 
             // Day/night color tint
@@ -326,13 +362,13 @@ impl App {
         }
         // Render yarn balls
         for ball in &self.yarn_balls.balls {
-            let fade = (ball.lifetime / 5.0).clamp(0.0, 1.0); // fade in last 5s
+            let fade = (ball.lifetime / 5.0).clamp(0.0, 1.0);
             let alpha = (fade * 255.0) as u32;
             self.instance_buf.push(CatInstance {
                 position: ball.pos.into(),
-                size: 1.0,
+                size: [1.0, 1.0],
                 color: (0xDD << 24) | (0x33 << 16) | (0x33 << 8) | alpha,
-                frame: 3, // circle SDF
+                frame: 3,
                 rotation: 0.0,
             });
         }
@@ -341,12 +377,12 @@ impl App {
         for treat in &self.click_state.treats {
             let fade = (treat.timer / 10.0).clamp(0.0, 1.0);
             let alpha = (fade * 200.0 + 55.0) as u32;
-            // Pulsing size for visibility
             let pulse = (time * 3.0 + treat.pos.x * 0.01).sin() * 0.1 + 1.0;
+            let s = 0.7 * pulse;
             self.instance_buf.push(CatInstance {
                 position: treat.pos.into(),
-                size: 0.7 * pulse,
-                color: (0xFF << 24) | (0xCC << 16) | (0x33 << 8) | alpha, // bright gold
+                size: [s, s],
+                color: (0xFF << 24) | (0xCC << 16) | (0x33 << 8) | alpha,
                 frame: 5,
                 rotation: 0.0,
             });
@@ -359,13 +395,13 @@ impl App {
             #[cfg(not(windows))]
             let (mx, my) = (0.0f32, 0.0f32);
 
-            // Pulsing glow effect
             let pulse = (time * 12.0).sin() * 0.15 + 1.0;
+            let s = 0.5 * pulse;
             self.instance_buf.push(CatInstance {
                 position: [mx, my],
-                size: 0.5 * pulse,
-                color: 0xFF0000FF, // bright red laser dot
-                frame: 3,          // circle SDF
+                size: [s, s],
+                color: 0xFF0000FF,
+                frame: 3,
                 rotation: 0.0,
             });
         }

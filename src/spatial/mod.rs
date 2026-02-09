@@ -11,6 +11,8 @@ pub struct CatSnapshot {
     pub state: BehaviorState,
     pub personality: Personality,
     pub size: f32,
+    /// True if this cat is sitting on another cat (managed by tower system).
+    pub is_stacked: bool,
 }
 
 /// Spatial hash grid for O(1) neighbor queries.
