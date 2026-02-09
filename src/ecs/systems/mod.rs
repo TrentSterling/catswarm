@@ -1,4 +1,5 @@
 pub mod behavior;
+pub mod click;
 pub mod interaction;
 pub mod mouse;
 pub mod movement;

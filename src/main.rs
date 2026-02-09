@@ -1,5 +1,6 @@
 mod app;
 mod cat;
+mod click;
 mod debug;
 mod ecs;
 mod mode;
