@@ -17,9 +17,10 @@ const MAX_TRAIL_VERTICES: usize = MAX_TRAIL_CATS * (TRAIL_POINTS_PER_CAT - 1) * 
 /// Sample trail position every N frames.
 const TRAIL_SAMPLE_INTERVAL: u32 = 3;
 
-/// Per-cat ring buffer of trail positions.
+/// Per-cat ring buffer of trail positions with per-point color.
 struct CatTrail {
     points: [(f32, f32); TRAIL_POINTS_PER_CAT],
+    colors: [[f32; 3]; TRAIL_POINTS_PER_CAT],
     head: usize,
     len: usize,
     color: [f32; 3],
@@ -29,14 +30,16 @@ impl CatTrail {
     fn new(r: f32, g: f32, b: f32) -> Self {
         Self {
             points: [(0.0, 0.0); TRAIL_POINTS_PER_CAT],
+            colors: [[r, g, b]; TRAIL_POINTS_PER_CAT],
             head: 0,
             len: 0,
             color: [r, g, b],
         }
     }
 
-    fn push(&mut self, x: f32, y: f32) {
+    fn push(&mut self, x: f32, y: f32, r: f32, g: f32, b: f32) {
         self.points[self.head] = (x, y);
+        self.colors[self.head] = [r, g, b];
         self.head = (self.head + 1) % TRAIL_POINTS_PER_CAT;
         if self.len < TRAIL_POINTS_PER_CAT {
             self.len += 1;
@@ -63,8 +66,9 @@ impl TrailSystem {
     }
 
     /// Update trail positions from cat positions. Call once per frame.
-    /// `positions` is (x, y, r, g, b) for each cat.
-    pub fn update(&mut self, positions: &[(f32, f32, f32, f32, f32)]) {
+    /// `positions` is (x, y, base_r, base_g, base_b, mood_r, mood_g, mood_b) for each cat.
+    /// mood color reflects behavior state; base color is the cat's fur color.
+    pub fn update(&mut self, positions: &[(f32, f32, f32, f32, f32, f32, f32, f32)]) {
         self.frame_counter += 1;
 
         // Resize trail storage if needed
@@ -79,9 +83,11 @@ impl TrailSystem {
             return;
         }
 
-        for (i, &(x, y, r, g, b)) in positions.iter().enumerate() {
-            self.trails[i].color = [r, g, b];
-            self.trails[i].push(x, y);
+        for (i, &(x, y, _base_r, _base_g, _base_b, mood_r, mood_g, mood_b)) in
+            positions.iter().enumerate()
+        {
+            self.trails[i].color = [mood_r, mood_g, mood_b];
+            self.trails[i].push(x, y, mood_r, mood_g, mood_b);
         }
     }
 
@@ -107,18 +113,18 @@ impl TrailSystem {
                 let t = i as f32 / (trail.len - 1) as f32;
                 let alpha = t * 0.5;
 
-                // Premultiplied alpha
-                let r = trail.color[0] * alpha;
-                let g = trail.color[1] * alpha;
-                let b = trail.color[2] * alpha;
+                // Use per-point mood color for each end of the line segment
+                let ca = trail.colors[idx_a];
+                let cb = trail.colors[idx_b];
 
+                // Premultiplied alpha
                 self.vertex_buf.push(TrailVertex {
                     position: [ax, ay],
-                    color: [r, g, b, alpha],
+                    color: [ca[0] * alpha, ca[1] * alpha, ca[2] * alpha, alpha],
                 });
                 self.vertex_buf.push(TrailVertex {
                     position: [bx, by],
-                    color: [r, g, b, alpha],
+                    color: [cb[0] * alpha, cb[1] * alpha, cb[2] * alpha, alpha],
                 });
             }
         }

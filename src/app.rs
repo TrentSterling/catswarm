@@ -10,7 +10,9 @@ use crate::cat;
 use crate::click::ClickState;
 use crate::debug::timer::{SystemPhase, SystemTimers};
 use crate::debug::DebugOverlay;
-use crate::ecs::components::{Appearance, CatName, CatState, Personality, Position, PrevPosition};
+use crate::ecs::components::{
+    Appearance, BehaviorState, CatName, CatState, Personality, Position, PrevPosition,
+};
 use crate::ecs::systems;
 use crate::ecs::systems::interaction::InteractionBuffers;
 use crate::ecs::systems::mouse::CursorState;
@@ -590,17 +592,25 @@ impl ApplicationHandler for App {
 
                 // --- Update trail and heatmap ---
                 {
-                    // Build trail positions from ECS
+                    // Build trail positions from ECS with mood colors
                     if self.trail_system.enabled {
                         let mut trail_positions = Vec::with_capacity(self.world.len() as usize);
-                        for (_, (pos, appearance)) in
-                            self.world.query::<(&Position, &Appearance)>().iter()
+                        for (_, (pos, appearance, cat_state)) in
+                            self.world.query::<(&Position, &Appearance, &CatState)>().iter()
                         {
                             let color = appearance.color;
-                            let r = ((color >> 24) & 0xFF) as f32 / 255.0;
-                            let g = ((color >> 16) & 0xFF) as f32 / 255.0;
-                            let b = ((color >> 8) & 0xFF) as f32 / 255.0;
-                            trail_positions.push((pos.0.x, pos.0.y, r, g, b));
+                            let base_r = ((color >> 24) & 0xFF) as f32 / 255.0;
+                            let base_g = ((color >> 16) & 0xFF) as f32 / 255.0;
+                            let base_b = ((color >> 8) & 0xFF) as f32 / 255.0;
+
+                            // Mood color based on behavior state
+                            let (mood_r, mood_g, mood_b) = mood_color(cat_state.state);
+
+                            trail_positions.push((
+                                pos.0.x, pos.0.y,
+                                base_r, base_g, base_b,
+                                mood_r, mood_g, mood_b,
+                            ));
                         }
                         self.trail_system.update(&trail_positions);
                     }
@@ -720,6 +730,22 @@ impl ApplicationHandler for App {
             }
             _ => {}
         }
+    }
+}
+
+/// Map behavior state to a mood color (r, g, b) for trail rendering.
+fn mood_color(state: BehaviorState) -> (f32, f32, f32) {
+    match state {
+        BehaviorState::Idle => (0.7, 0.7, 0.7),                    // soft white/gray
+        BehaviorState::Walking | BehaviorState::Parading => (0.4, 0.8, 0.4), // green
+        BehaviorState::Running => (0.9, 0.3, 0.2),                 // red
+        BehaviorState::Sleeping | BehaviorState::Grooming => (0.3, 0.5, 0.9), // blue
+        BehaviorState::ChasingMouse | BehaviorState::ChasingCat => (0.9, 0.5, 0.8), // pink
+        BehaviorState::FleeingCursor => (0.9, 0.7, 0.2),           // yellow/orange
+        BehaviorState::Playing => (0.9, 0.4, 0.7),                 // pink/magenta
+        BehaviorState::Zoomies => (1.0, 0.2, 0.1),                 // bright red
+        BehaviorState::Startled => (1.0, 0.9, 0.2),                // bright yellow
+        BehaviorState::Yawning => (0.5, 0.5, 0.8),                 // muted blue
     }
 }
 
