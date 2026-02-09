@@ -149,6 +149,14 @@ pub fn get_idle_time() -> f64 {
     }
 }
 
+/// Get the current local hour as a float (0.0-24.0, e.g. 14.5 = 2:30 PM).
+pub fn get_local_hour() -> f32 {
+    unsafe {
+        let st = windows::Win32::System::SystemInformation::GetLocalTime();
+        st.wHour as f32 + st.wMinute as f32 / 60.0 + st.wSecond as f32 / 3600.0
+    }
+}
+
 /// Get mouse button states. Returns (left_down, right_down, middle_down).
 pub fn get_mouse_buttons() -> (bool, bool, bool) {
     unsafe {

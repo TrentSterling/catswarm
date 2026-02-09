@@ -1,5 +1,3 @@
-use glam::Vec2;
-
 use crate::ecs::components::{BehaviorState, CatState, Position, Velocity};
 
 /// Platform-agnostic desktop window rectangle.

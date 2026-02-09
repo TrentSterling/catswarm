@@ -1,6 +1,3 @@
-pub mod animation;
-pub mod personality;
-
 use crate::ecs::components::*;
 use glam::Vec2;
 

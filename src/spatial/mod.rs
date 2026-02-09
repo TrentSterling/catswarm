@@ -10,6 +10,7 @@ pub struct CatSnapshot {
     pub vel: Vec2,
     pub state: BehaviorState,
     pub personality: Personality,
+    pub size: f32,
 }
 
 /// Spatial hash grid for O(1) neighbor queries.

@@ -1,7 +1,7 @@
 use glam::Vec2;
 
 use crate::ecs::components::{
-    BehaviorState, CatState, InteractionTarget, Position, Velocity,
+    BehaviorState, CatState, InteractionTarget, Position, SleepingPile, Velocity,
 };
 use crate::spatial::{CatSnapshot, SpatialHash};
 
@@ -58,6 +58,14 @@ const PARADE_RADIUS_SQ: f32 = PARADE_RADIUS * PARADE_RADIUS;
 const PARADE_FOLLOW_DIST: f32 = 40.0;
 /// Parade follow speed.
 const PARADE_SPEED: f32 = 45.0;
+
+/// Sleeping pile detection radius.
+const PILE_RADIUS: f32 = 40.0;
+const PILE_RADIUS_SQ: f32 = PILE_RADIUS * PILE_RADIUS;
+/// Min sleeping neighbors for pile membership (3+ cats total).
+const PILE_MIN_NEIGHBORS: u32 = 2;
+/// Wake cascade radius (wider than pile itself).
+const WAKE_CASCADE_RADIUS_SQ: f32 = 80.0 * 80.0;
 
 /// Velocity when chasing another cat.
 const CAT_CHASE_SPEED: f32 = 90.0;
@@ -125,6 +133,9 @@ pub struct InteractionBuffers {
     alignment_count: Vec<u32>,
     parade_dir_sum: Vec<Vec2>,
     parade_count: Vec<u32>,
+    parade_follow_pos: Vec<Vec2>,
+    parade_follow_dist_sq: Vec<f32>,
+    sleeping_neighbor_count: Vec<u32>,
     active: Vec<ActiveInteraction>,
 }
 
@@ -139,6 +150,9 @@ impl InteractionBuffers {
             alignment_count: vec![0; capacity],
             parade_dir_sum: vec![Vec2::ZERO; capacity],
             parade_count: vec![0; capacity],
+            parade_follow_pos: vec![Vec2::ZERO; capacity],
+            parade_follow_dist_sq: vec![f32::MAX; capacity],
+            sleeping_neighbor_count: vec![0; capacity],
             active: Vec::with_capacity(64),
         }
     }
@@ -164,6 +178,9 @@ pub fn update(
 
     // Phase C: Apply results to the ECS world
     phase_write(world, bufs, snapshots, rng);
+
+    // Phase D: Sleeping pile management
+    phase_sleeping_piles(world, snapshots, bufs, rng);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +303,9 @@ fn phase_read(
     bufs.alignment_count.resize(len, 0);
     bufs.parade_dir_sum.resize(len, Vec2::ZERO);
     bufs.parade_count.resize(len, 0);
+    bufs.parade_follow_pos.resize(len, Vec2::ZERO);
+    bufs.parade_follow_dist_sq.resize(len, f32::MAX);
+    bufs.sleeping_neighbor_count.resize(len, 0);
     for i in 0..len {
         bufs.separation[i] = Vec2::ZERO;
         bufs.cohesion_sum[i] = Vec2::ZERO;
@@ -294,6 +314,9 @@ fn phase_read(
         bufs.alignment_count[i] = 0;
         bufs.parade_dir_sum[i] = Vec2::ZERO;
         bufs.parade_count[i] = 0;
+        bufs.parade_follow_pos[i] = Vec2::ZERO;
+        bufs.parade_follow_dist_sq[i] = f32::MAX;
+        bufs.sleeping_neighbor_count[i] = 0;
     }
 
     let count = snapshots.len();
@@ -319,10 +342,12 @@ fn phase_read(
             let dist_sq = delta.length_squared();
 
             // --- Separation (always applies, close range) ---
+            // Bigger cats push harder (1.0 at size=1.0, 1.3 at size=1.4)
             if dist_sq < SEPARATION_RADIUS_SQ && dist_sq > 0.001 {
                 let dist = dist_sq.sqrt();
                 let overlap = SEPARATION_RADIUS - dist;
-                let push = delta / dist * overlap * SEPARATION_STRENGTH;
+                let size_factor = 0.5 + them.size * 0.5;
+                let push = delta / dist * overlap * SEPARATION_STRENGTH * size_factor;
                 bufs.separation[my_idx] += push;
             }
 
@@ -353,11 +378,28 @@ fn phase_read(
                 && me.vel.length_squared() > 1.0
                 && them.vel.length_squared() > 1.0
             {
-                let dot = me.vel.normalize().dot(them.vel.normalize());
+                let my_dir = me.vel.normalize();
+                let dot = my_dir.dot(them.vel.normalize());
                 if dot > 0.7 {
                     bufs.parade_dir_sum[my_idx] += them.vel.normalize();
                     bufs.parade_count[my_idx] += 1;
+
+                    // Follow-the-leader: track nearest aligned cat ahead of me
+                    let rel_pos = them.pos - me.pos;
+                    let ahead = rel_pos.dot(my_dir);
+                    if ahead > 5.0 && dist_sq < bufs.parade_follow_dist_sq[my_idx] {
+                        bufs.parade_follow_dist_sq[my_idx] = dist_sq;
+                        bufs.parade_follow_pos[my_idx] = them.pos;
+                    }
                 }
+            }
+
+            // --- Sleeping pile detection ---
+            if dist_sq < PILE_RADIUS_SQ
+                && me.state == BehaviorState::Sleeping
+                && them.state == BehaviorState::Sleeping
+            {
+                bufs.sleeping_neighbor_count[my_idx] += 1;
             }
 
             // --- Social interactions (only process each pair once) ---
@@ -563,24 +605,45 @@ fn phase_write(
         }
     }
 
-    // Apply parade behavior: strong alignment for cats with enough aligned neighbors
+    // Apply parade behavior: follow-the-leader with spacing
     for (idx, snap) in snapshots.iter().enumerate() {
-        if bufs.parade_count[idx] >= (PARADE_MIN_CATS - 1) as u32 {
-            let avg_dir = bufs.parade_dir_sum[idx] / bufs.parade_count[idx] as f32;
-            if avg_dir.length_squared() > 0.01 {
-                let parade_vel = avg_dir.normalize() * PARADE_SPEED;
-                if let Ok(mut vel) = world.get::<&mut Velocity>(snap.entity) {
-                    vel.0 = vel.0 * 0.7 + parade_vel * 0.3;
-                }
-                if let Ok(mut state) = world.get::<&mut CatState>(snap.entity) {
-                    if matches!(
-                        state.state,
-                        BehaviorState::Walking | BehaviorState::Running | BehaviorState::Parading
-                    ) {
-                        state.state = BehaviorState::Parading;
-                        state.timer = 0.5; // refresh each tick while aligned
-                    }
-                }
+        if bufs.parade_count[idx] < (PARADE_MIN_CATS - 1) as u32 {
+            continue;
+        }
+        let avg_dir = bufs.parade_dir_sum[idx] / bufs.parade_count[idx] as f32;
+        if avg_dir.length_squared() < 0.01 {
+            continue;
+        }
+        let parade_dir = avg_dir.normalize();
+
+        if bufs.parade_follow_dist_sq[idx] < f32::MAX {
+            // Follower: steer toward a point PARADE_FOLLOW_DIST behind the leader
+            let leader_pos = bufs.parade_follow_pos[idx];
+            let target = leader_pos - parade_dir * PARADE_FOLLOW_DIST;
+            let to_target = target - snap.pos;
+            let follow_vel = if to_target.length_squared() > 1.0 {
+                to_target.normalize() * PARADE_SPEED
+            } else {
+                parade_dir * PARADE_SPEED
+            };
+            if let Ok(mut vel) = world.get::<&mut Velocity>(snap.entity) {
+                vel.0 = vel.0 * 0.5 + follow_vel * 0.5;
+            }
+        } else {
+            // Leader (no one ahead): just align to parade direction
+            let parade_vel = parade_dir * PARADE_SPEED;
+            if let Ok(mut vel) = world.get::<&mut Velocity>(snap.entity) {
+                vel.0 = vel.0 * 0.7 + parade_vel * 0.3;
+            }
+        }
+
+        if let Ok(mut state) = world.get::<&mut CatState>(snap.entity) {
+            if matches!(
+                state.state,
+                BehaviorState::Walking | BehaviorState::Running | BehaviorState::Parading
+            ) {
+                state.state = BehaviorState::Parading;
+                state.timer = 0.5; // refresh each tick while aligned
             }
         }
     }
@@ -721,5 +784,81 @@ fn clamp_length(v: Vec2, max_len: f32) -> Vec2 {
         v / len_sq.sqrt() * max_len
     } else {
         v
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase D: Sleeping pile detection and wake cascade
+// ---------------------------------------------------------------------------
+
+fn phase_sleeping_piles(
+    world: &mut hecs::World,
+    snapshots: &[CatSnapshot],
+    bufs: &InteractionBuffers,
+    rng: &mut fastrand::Rng,
+) {
+    // Step 1: Wake cascade — find pile members that are no longer sleeping
+    // (woken by behavior transitions, clicks, mouse interactions, etc.)
+    let mut woken_positions: Vec<Vec2> = Vec::new();
+    for (_, (pos, state, _pile)) in
+        world.query::<(&Position, &CatState, &SleepingPile)>().iter()
+    {
+        if state.state != BehaviorState::Sleeping {
+            woken_positions.push(pos.0);
+        }
+    }
+
+    // Find sleeping cats near woken pile members and wake them
+    if !woken_positions.is_empty() {
+        let mut to_wake: Vec<hecs::Entity> = Vec::new();
+        for (entity, (pos, state)) in world.query::<(&Position, &CatState)>().iter() {
+            if state.state != BehaviorState::Sleeping {
+                continue;
+            }
+            for woken_pos in &woken_positions {
+                let dist_sq = (pos.0 - *woken_pos).length_squared();
+                if dist_sq < WAKE_CASCADE_RADIUS_SQ {
+                    to_wake.push(entity);
+                    break;
+                }
+            }
+        }
+
+        for entity in to_wake {
+            if let Ok((state, vel)) =
+                world.query_one_mut::<(&mut CatState, &mut Velocity)>(entity)
+            {
+                if state.state == BehaviorState::Sleeping {
+                    // Gentle startle — woken from pile
+                    state.state = BehaviorState::Startled;
+                    state.timer = 0.3;
+                    vel.0.y -= 150.0;
+                    vel.0.x += (rng.f32() - 0.5) * 80.0;
+                }
+            }
+        }
+    }
+
+    // Step 2: Update pile membership from sleeping_neighbor_count
+    for (idx, snap) in snapshots.iter().enumerate() {
+        if idx >= bufs.sleeping_neighbor_count.len() {
+            break;
+        }
+        if snap.state == BehaviorState::Sleeping
+            && bufs.sleeping_neighbor_count[idx] >= PILE_MIN_NEIGHBORS
+        {
+            // Part of a pile — add component if missing
+            if world.get::<&SleepingPile>(snap.entity).is_err() {
+                let _ = world.insert_one(
+                    snap.entity,
+                    SleepingPile {
+                        breathing_offset: rng.f32() * std::f32::consts::TAU,
+                    },
+                );
+            }
+        } else {
+            // Not in a pile — remove component if present
+            let _ = world.remove_one::<SleepingPile>(snap.entity);
+        }
     }
 }
