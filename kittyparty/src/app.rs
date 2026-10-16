@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowAttributes, WindowId, WindowLevel};
 
 use crate::cards::{self, Card};
@@ -183,7 +184,9 @@ impl ApplicationHandler for App {
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_inner_size(monitor.size())
-            .with_position(pos);
+            .with_position(pos)
+            .with_skip_taskbar(true)
+            .with_no_redirection_bitmap(true);
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
         win::make_overlay(&window);
         self.origin = Vec2::new(pos.x as f32, pos.y as f32);
@@ -218,6 +221,7 @@ impl ApplicationHandler for App {
         self.rx = Some(rx);
 
         window.set_visible(true);
+        win::make_overlay(&window);
         event_loop.set_control_flow(ControlFlow::Poll);
         self.gpu = Some(gpu);
         self.party = Some(party);
@@ -267,6 +271,10 @@ impl ApplicationHandler for App {
             if let Some(w) = &self.window {
                 win::keep_on_top(w);
             }
+        }
+
+        if let Some(w) = &self.window {
+            win::apply_styles(win::hwnd_of(w));
         }
 
         let (cx, cy) = win::cursor_pos();

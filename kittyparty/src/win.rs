@@ -27,7 +27,6 @@ pub fn hwnd_of(window: &winit::window::Window) -> HWND {
 /// Turn the winit window into a transparent, click-through, always-on-top
 /// overlay that never takes focus or shows up in Alt+Tab.
 pub fn make_overlay(window: &winit::window::Window) {
-    let _ = window.set_cursor_hittest(false);
     let hwnd = hwnd_of(window);
     unsafe {
         apply_styles(hwnd);
@@ -52,28 +51,53 @@ pub fn make_overlay(window: &winit::window::Window) {
     }
 }
 
-/// No layered/GDI surface: all pixels come from the DirectComposition visual
-/// wgpu creates (DxgiFromVisual). WS_EX_TRANSPARENT keeps clicks going to the
-/// windows underneath.
-unsafe fn apply_styles(hwnd: HWND) {
+/// How the overlay lets clicks through. Plain WS_EX_TRANSPARENT (catswarm's
+/// and DuckToy's style) still takes hits from other processes, so the default
+/// is the classic layered + transparent pair with a fully opaque layer alpha,
+/// which keeps the DirectComposition visual on screen.
+/// KITTYPARTY_CLICK_MODE=plain switches back for testing.
+fn layered_mode() -> bool {
+    static MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| std::env::var("KITTYPARTY_CLICK_MODE").map(|v| v != "plain").unwrap_or(true))
+}
+
+/// No GDI redirection surface: all pixels come from the DirectComposition
+/// visual wgpu creates (DxgiFromVisual). Cheap when nothing changed, so it
+/// runs every frame: winit rewrites the extended style whenever it applies
+/// its own cached window flags (on show, focus changes and so on).
+pub fn apply_styles(hwnd: HWND) {
     const WS_EX_NOREDIRECTIONBITMAP: isize = 0x0020_0000;
-    let old = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    let new = (old & !(WS_EX_LAYERED.0 as isize))
-        | WS_EX_NOACTIVATE.0 as isize
-        | WS_EX_TOOLWINDOW.0 as isize
-        | WS_EX_TRANSPARENT.0 as isize
-        | WS_EX_NOREDIRECTIONBITMAP;
-    if old != new {
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new);
+    unsafe {
+        let old = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let mut new = (old & !(WS_EX_APPWINDOW.0 as isize | WS_EX_LAYERED.0 as isize))
+            | WS_EX_NOACTIVATE.0 as isize
+            | WS_EX_TOOLWINDOW.0 as isize
+            | WS_EX_TRANSPARENT.0 as isize
+            | WS_EX_NOREDIRECTIONBITMAP;
+        if layered_mode() {
+            new |= WS_EX_LAYERED.0 as isize;
+        }
+        if old != new {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new);
+            if layered_mode() {
+                let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
+            }
+            let _ = SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
     }
 }
 
-/// Other apps that go topmost can push us under them; re-assert now and then.
-/// winit can put WS_EX_LAYERED back when it rebuilds its cached styles
-/// (DuckToy hit this), so the styles are re-checked here too.
+/// Other topmost apps can push us under them; re-assert now and then.
 pub fn keep_on_top(window: &winit::window::Window) {
     unsafe {
-        apply_styles(hwnd_of(window));
         let _ = SetWindowPos(
             hwnd_of(window),
             HWND_TOPMOST,

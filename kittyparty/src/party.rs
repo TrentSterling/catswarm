@@ -491,12 +491,17 @@ mod tests {
         }
         assert!(p.place_card(false, true).is_none());
         p.burst(Vec2::new(400.0, 300.0), 200, 0);
-        let busy = p.live.iter().filter(|n| **n > 0).count();
-        let mut placed = 0;
-        while p.place_card(false, false).is_some() {
-            placed += 1;
+        let busy: Vec<usize> = (0..total).filter(|&i| p.live[i] > 0).collect();
+        assert!(!busy.is_empty() && busy.len() < total);
+        // Once the idle fallbacks are used up, photos rotate among themselves,
+        // so place more than there are slots.
+        for _ in 0..total * 2 {
+            p.place_card(false, false).expect("an idle slot");
         }
-        assert_eq!(placed, total - busy);
+        for (i, slot) in p.slots.iter().enumerate() {
+            let expect_fallback = busy.contains(&i);
+            assert_eq!(*slot == Slot::Fallback, expect_fallback, "slot {i}");
+        }
     }
 
     #[test]
