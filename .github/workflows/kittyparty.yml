@@ -1,0 +1,27 @@
+name: KittyParty
+
+on:
+  push:
+    paths: ["kittyparty/**", ".github/workflows/kittyparty.yml"]
+  pull_request:
+    paths: ["kittyparty/**", ".github/workflows/kittyparty.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: kittyparty
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kittyparty
+      - run: cargo test
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KittyParty
+          path: kittyparty/target/release/kittyparty.exe
