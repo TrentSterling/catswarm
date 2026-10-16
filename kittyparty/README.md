@@ -9,7 +9,8 @@ on top of everything and never gets in the way of your clicks.
 ## Using it
 
 Double-click `KittyParty.exe`. Click (or right-click) the kitty in the tray,
-next to the clock, for options:
+next to the clock, for options. Windows 11 tucks new tray icons under the
+**^** arrow at first; drag the kitty out of there to keep her handy.
 
 | Menu item | What it does |
 | --- | --- |
@@ -71,3 +72,8 @@ from this folder after editing.
   box-filtered mip chain (DuckToy's edge lesson), so rotating, shrinking cards
   keep soft edges with no dark fringes.
 - `win.rs` — overlay styles, tray menu, start-with-Windows, single instance.
+  Click-through needs `WS_EX_LAYERED | WS_EX_TRANSPARENT` (with an opaque
+  layer alpha, the DirectComposition visual still shows). Plain
+  `WS_EX_TRANSPARENT` still eats clicks meant for other apps. winit rewrites
+  the extended style when it applies its own flags, so the styles are
+  re-checked every frame.
