@@ -286,6 +286,7 @@
     footer .links a { margin: 0 12px; }
 
     @media (max-width: 600px) {
+      .install pre { max-width: 100%; overflow-x: auto; }
       .stats { grid-template-columns: repeat(2, 1fr); }
       .how { padding: 28px; }
     }
@@ -433,7 +434,7 @@
   <!-- Install -->
   <section class="install" id="install">
     <h2>Try it</h2>
-    <pre>git clone https://github.com/TrentSterling/catswarm
+    <pre tabindex="0">git clone https://github.com/TrentSterling/catswarm
 cd catswarm
 cargo run --release</pre>
     <div class="note">Requires Windows 10/11 with DX12 GPU and Rust toolchain. Press ESC to quit.</div>
