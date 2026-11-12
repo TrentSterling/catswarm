@@ -27,17 +27,17 @@
 - [x] Mouse chase behavior (cats near cursor get attracted)
 - [x] Idle behaviors (random walk, sit, sleep after timeout)
 
-## Milestone 4: Cat-to-Cat Interaction
-- [ ] Neighbor query via spatial hash
-- [ ] Cats play with nearby cats
-- [ ] Cats nap together (cluster sleeping)
-- [ ] Chase/flee interactions between cats
-- [ ] Social distance — cats spread out when too crowded
+## Milestone 4: Cat-to-Cat Interaction ✅
+- [x] Neighbor query via spatial hash
+- [x] Cats play with nearby cats (interaction.rs + contagion mechanics)
+- [x] Cats nap together (yawning contagion spreads to nearby idle cats at 30%)
+- [x] Chase/flee interactions between cats (ChasingCat + FleeingCursor states)
+- [x] Social distance — Moses Effect scatters crowded cats
 
-## Milestone 5: Personality System
-- [ ] Personality component (laziness, energy, curiosity, skittishness) as f32s
-- [ ] Personality affects state transition weights
-- [ ] Personality affects movement speed, idle duration, chase eagerness
+## Milestone 5: Personality System ✅
+- [x] Personality component (laziness, energy, curiosity, skittishness) as f32s
+- [x] Personality affects state transition weights
+- [x] Personality affects movement speed, idle duration, chase eagerness
 - [ ] Procedural name generation (optional/fun)
 
 ## Milestone 6: Window Awareness

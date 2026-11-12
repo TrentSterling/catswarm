@@ -60,6 +60,10 @@ src/
   mode.rs          — AppMode (Work/Play/Zen/Chaos) + AFK escalation
   click.rs         — ClickState: mouse button edge-detection, treats, laser
   heatmap.rs       — Cursor heatmap: 64x64 grid with decay + sampling
+  toy.rs           — toy/treat logic
+  daynight.rs      — day/night cycle system
+  particles.rs     — particle effects
+  tray.rs          — system tray integration
   ecs/
     mod.rs         — re-exports
     components.rs  — all ECS components (11 behavior states)
@@ -71,6 +75,7 @@ src/
       mouse.rs     — CursorState tracking, Moses Effect, personality reactions
       click.rs     — click system: startle, treats, laser pointer
       interaction.rs — cat-to-cat interactions + contagion mechanics
+      towers.rs    — cat tower stacking system
       window_aware.rs — Win32 window detection (stub, Milestone 6)
   render/
     mod.rs         — GpuState: device, surface, resize, render passes
@@ -86,8 +91,6 @@ src/
     mod.rs         — spatial hash grid + CatSnapshot
   cat/
     mod.rs         — cat spawning, procedural color generation
-    personality.rs — personality trait weights (stub, Milestone 5)
-    animation.rs   — animation state struct (stub, Milestone 7)
   debug/
     mod.rs         — DebugOverlay: egui-powered debug panel
     ring.rs        — RingBuffer for frame time history
@@ -95,9 +98,6 @@ src/
   platform/
     mod.rs         — platform abstraction
     win32.rs       — Win32 overlay, mouse, keys, idle time, window enum
-  util/
-    mod.rs         — misc utilities
-    pool.rs        — object pool / arena
 ```
 
 ## Key Technical Details
